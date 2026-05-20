@@ -6,7 +6,7 @@ export type ResearchSourcePolicy = "latest_web_first" | "broad_web_academic" | "
 export type AgentCommandRisk = "safe_auto" | "safe_confirm" | "blocked";
 export type AgentCommandOutcome = "success" | "failure" | "blocked" | "confirmation_required" | "planned";
 export type AgentCommandTestStatus = "untested" | "passed" | "failed";
-export type AutomationRunStatus = "queued" | "planning" | "running" | "waiting_for_login" | "confirmation_required" | "complete" | "error" | "cancelled";
+export type AutomationRunStatus = "queued" | "planning" | "running" | "waiting_for_login" | "waiting_for_user" | "confirmation_required" | "complete" | "error" | "cancelled";
 export type AgentMemoryCategory = "course" | "project" | "goal" | "preference" | "general";
 export type StudyArtifactType = "notes" | "flashcards" | "quiz" | "revision_plan" | "viva_questions";
 

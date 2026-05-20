@@ -1659,7 +1659,7 @@ export default function Home() {
           .then((run) => {
             setAutomationRun(run);
             setAutomationEvents(run.events);
-            if (["complete", "error", "cancelled", "waiting_for_login", "confirmation_required"].includes(run.status)) {
+            if (["complete", "error", "cancelled", "waiting_for_login", "waiting_for_user", "confirmation_required"].includes(run.status)) {
               setAutomationBusy(false);
               setAutomationCancelBusy(false);
             }
@@ -2329,7 +2329,7 @@ function AutomationWorkspace({
 }) {
   const trimmedDraft = draft.trim();
   const visibleItems = useMemo(() => buildAutomationTimeline(events).slice(-14), [events]);
-  const isWaiting = run?.status === "waiting_for_login";
+  const isWaiting = run?.status === "waiting_for_login" || run?.status === "waiting_for_user";
   const needsConfirmation = run?.status === "confirmation_required";
   const isTerminal = run ? ["complete", "error", "cancelled"].includes(run.status) : false;
   const statusLabel = run?.status.replaceAll("_", " ") ?? "Ready";
@@ -2390,8 +2390,8 @@ function AutomationWorkspace({
           )}
           {isWaiting && (
             <article className="automation-action-card">
-              <span>Waiting for you</span>
-              <p>Finish the login or manual step in the Automation Browser, then continue.</p>
+              <span>{run?.status === "waiting_for_user" ? "Waiting for desktop step" : "Waiting for you"}</span>
+              <p>{run?.status === "waiting_for_user" ? "Finish the Windows step, then continue." : "Finish the login or manual step in the Automation Browser, then continue."}</p>
               <button type="button" onClick={onContinue}>
                 <Play className="h-4 w-4" />
                 Continue

@@ -749,7 +749,8 @@ button {
 }
 
 .automation-chat-message.confirmation_required,
-.automation-chat-message.waiting_for_login {
+.automation-chat-message.waiting_for_login,
+.automation-chat-message.waiting_for_user {
   border-color: rgba(255, 178, 46, 0.32);
   background: rgba(255, 178, 46, 0.08);
 }
