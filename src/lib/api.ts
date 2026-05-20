@@ -1,8 +1,12 @@
 export type AgentStatus = "idle" | "working" | "complete" | "warning" | "error";
 export type AppMode = "cockpit" | "research" | "agents" | "sources" | "library" | "timeline" | "settings";
+export type ResearchDepth = "quick" | "deep" | "academic";
+export type ResearchJobStatus = "queued" | "planning" | "searching" | "reading" | "extracting" | "verifying" | "writing" | "complete" | "error";
+export type ResearchSourcePolicy = "latest_web_first" | "broad_web_academic" | "academic_first";
 export type AgentCommandRisk = "safe_auto" | "safe_confirm" | "blocked";
 export type AgentCommandOutcome = "success" | "failure" | "blocked" | "confirmation_required" | "planned";
 export type AgentCommandTestStatus = "untested" | "passed" | "failed";
+export type AutomationRunStatus = "queued" | "planning" | "running" | "waiting_for_login" | "confirmation_required" | "complete" | "error" | "cancelled";
 export type AgentMemoryCategory = "course" | "project" | "goal" | "preference" | "general";
 export type StudyArtifactType = "notes" | "flashcards" | "quiz" | "revision_plan" | "viva_questions";
 
@@ -11,6 +15,11 @@ export type Source = {
   url: string;
   snippet: string;
   provider: string;
+  domain?: string;
+  published_at?: string | null;
+  fetched_chars?: number;
+  quality_score?: number;
+  extraction_status?: string;
 };
 
 export type AgentEvent = {
@@ -71,6 +80,43 @@ export type AgentCommandTestResponse = {
   events: AgentEvent[];
 };
 
+export type AutomationEvent = {
+  id: string;
+  timestamp: string;
+  type: string;
+  message: string;
+  data: Record<string, unknown>;
+};
+
+export type AutomationRun = {
+  id: string;
+  prompt: string;
+  status: AutomationRunStatus;
+  current_url: string;
+  events: AutomationEvent[];
+  result: string;
+  error: string;
+  recipe_id: string | null;
+  create_recipe: boolean;
+  confirmation: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AutomationConfirmOptions = {
+  confirmed_rights?: boolean;
+  attestation?: string;
+};
+
+export type AutomationRecipe = {
+  id: string;
+  name: string;
+  prompt: string;
+  steps: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AgentMemoryItem = {
   id: string;
   category: AgentMemoryCategory;
@@ -104,10 +150,81 @@ export type StudyArtifact = {
   created_at: string;
 };
 
+export type MockTestDifficulty = "easy" | "medium" | "hard" | "mixed";
+export type MockTestMode = "mcq";
+export type MockTestSourceRequirement = "none" | "pyq_required" | "source_backed";
+export type MockTestSourceMode = "uploaded_docs";
+export type MockTestGenerationMode = "topic_practice" | "profile_based" | "syllabus_based" | "source_backed_pyq" | "pyq_style" | "llm_planned";
+export type MockAttemptStatus = "active" | "submitted";
+
+export type MockQuestionView = {
+  id: string;
+  prompt: string;
+  options: string[];
+  difficulty: MockTestDifficulty;
+  tags: string[];
+  source_refs: Source[];
+};
+
+export type MockQuestionReview = MockQuestionView & {
+  correct_option_index: number;
+  selected_option_index: number | null;
+  is_correct: boolean;
+  explanation: string;
+};
+
+export type MockTest = {
+  id: string;
+  topic: string;
+  exam: string;
+  subject: string;
+  mode: MockTestMode;
+  difficulty: MockTestDifficulty;
+  question_count: number;
+  duration_minutes: number;
+  questions: MockQuestionView[];
+  created_at: string;
+  source: string;
+  generation_mode: MockTestGenerationMode;
+  blueprint_source: string;
+  syllabus_units: string[];
+  quality_score: number;
+  quality_warnings: string[];
+  source_requirement: MockTestSourceRequirement;
+  source_mode: MockTestSourceMode;
+  source_query: string;
+  constraints: string[];
+  sources: Source[];
+  setup_required: string[];
+};
+
+export type MockAttempt = {
+  id: string;
+  test_id: string;
+  status: MockAttemptStatus;
+  started_at: string;
+  submitted_at: string | null;
+  elapsed_seconds: number;
+  answers: Record<string, number>;
+};
+
+export type MockTestSubmitResponse = {
+  test: MockTest;
+  attempt: MockAttempt;
+  score: number;
+  total: number;
+  percentage: number;
+  correct_count: number;
+  incorrect_count: number;
+  elapsed_seconds: number;
+  review: MockQuestionReview[];
+};
+
 export type HealthResponse = {
   status: string;
   app: string;
   model: string;
+  models?: Record<string, string>;
   providers: Record<string, boolean>;
 };
 
@@ -125,6 +242,9 @@ export type ResearchResponse = {
   critic_notes: string[];
   events: AgentEvent[];
   setup_required: string[];
+  job_id?: string | null;
+  status?: ResearchJobStatus | null;
+  report?: ResearchReport | null;
 };
 
 export type ResearchReport = {
@@ -133,6 +253,34 @@ export type ResearchReport = {
   created_at: string;
   markdown: string;
   download_url: string;
+};
+
+export type ResearchRequestPayload = {
+  topic: string;
+  depth?: ResearchDepth;
+  source_mode?: "web" | "academic" | "mixed";
+  source_policy?: ResearchSourcePolicy;
+  max_candidates?: number;
+  max_sources?: number;
+  recency_days?: number | null;
+  require_citations?: boolean;
+};
+
+export type ResearchJobResponse = {
+  id: string;
+  status: ResearchJobStatus;
+  request: Required<Omit<ResearchRequestPayload, "recency_days">> & { recency_days: number | null };
+  summary: string;
+  detailed_answer: string;
+  citations: Source[];
+  confidence: number;
+  critic_notes: string[];
+  events: AgentEvent[];
+  setup_required: string[];
+  report: ResearchReport | null;
+  error: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ActionResult = {
@@ -168,7 +316,7 @@ export type VoiceStatusResponse = {
   message: string;
 };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8001";
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -233,17 +381,97 @@ export async function getAgentAudit() {
   return parseResponse<AgentAuditEntry[]>(await fetch(`${API_BASE_URL}/api/agent/audit`, { cache: "no-store" }));
 }
 
-export async function sendChat(message: string, mode = "general") {
-  return parseResponse<ChatResponse>(
-    await fetch(`${API_BASE_URL}/api/chat`, {
+export async function startAutomationRun(prompt: string, recipeId?: string | null, createRecipe = false) {
+  return parseResponse<AutomationRun>(
+    await fetch(`${API_BASE_URL}/api/automations/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, mode }),
+      body: JSON.stringify({ prompt, recipe_id: recipeId ?? null, create_recipe: createRecipe }),
     }),
   );
 }
 
-export async function runResearch(topic: string, depth = "quick", sourceMode = "mixed") {
+export async function getAutomationRun(runId: string) {
+  return parseResponse<AutomationRun>(await fetch(`${API_BASE_URL}/api/automations/runs/${runId}`, { cache: "no-store" }));
+}
+
+export function automationRunEventsUrl(runId: string) {
+  return `${API_BASE_URL}/api/automations/runs/${runId}/events`;
+}
+
+export async function continueAutomationRun(runId: string, note = "") {
+  return parseResponse<AutomationRun>(
+    await fetch(`${API_BASE_URL}/api/automations/runs/${runId}/continue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    }),
+  );
+}
+
+export async function confirmAutomationRun(runId: string, approved: boolean, options: AutomationConfirmOptions = {}) {
+  return parseResponse<AutomationRun>(
+    await fetch(`${API_BASE_URL}/api/automations/runs/${runId}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved, confirmed_rights: Boolean(options.confirmed_rights), attestation: options.attestation ?? "" }),
+    }),
+  );
+}
+
+export async function cancelAutomationRun(runId: string, note = "Download cancelled by user.") {
+  return parseResponse<AutomationRun>(
+    await fetch(`${API_BASE_URL}/api/automations/runs/${runId}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    }),
+  );
+}
+
+export async function openAutomationDownloadFolder(path: string) {
+  return parseResponse<{ ok: boolean }>(
+    await fetch(`${API_BASE_URL}/api/automations/open-download-folder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    }),
+  );
+}
+
+export async function listAutomationRecipes() {
+  return parseResponse<AutomationRecipe[]>(await fetch(`${API_BASE_URL}/api/automations/recipes`, { cache: "no-store" }));
+}
+
+export async function createAutomationRecipe(name: string, prompt: string, steps: Array<Record<string, unknown>> = []) {
+  return parseResponse<AutomationRecipe>(
+    await fetch(`${API_BASE_URL}/api/automations/recipes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, prompt, steps }),
+    }),
+  );
+}
+
+export async function deleteAutomationRecipe(recipeId: string) {
+  return parseResponse<{ ok: boolean }>(
+    await fetch(`${API_BASE_URL}/api/automations/recipes/${recipeId}`, {
+      method: "DELETE",
+    }),
+  );
+}
+
+export async function sendChat(message: string, mode = "general", astraPro = false) {
+  return parseResponse<ChatResponse>(
+    await fetch(`${API_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, mode, astra_pro: astraPro }),
+    }),
+  );
+}
+
+export async function runResearch(topic: string, depth: ResearchDepth = "deep", sourceMode = "mixed") {
   return parseResponse<ResearchResponse>(
     await fetch(`${API_BASE_URL}/api/research`, {
       method: "POST",
@@ -258,7 +486,40 @@ export async function runResearch(topic: string, depth = "quick", sourceMode = "
   );
 }
 
-export async function runCommand(text: string, mode: AppMode, inputSource: "typed" | "voice" | "quick_action" = "typed", depth?: "quick" | "deep" | "academic") {
+export async function startResearchJob(payload: ResearchRequestPayload) {
+  return parseResponse<ResearchJobResponse>(
+    await fetch(`${API_BASE_URL}/api/research/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        depth: "deep",
+        source_mode: "mixed",
+        source_policy: "latest_web_first",
+        max_candidates: 60,
+        max_sources: 20,
+        recency_days: 365,
+        require_citations: true,
+        ...payload,
+      }),
+    }),
+  );
+}
+
+export async function getResearchJob(jobId: string) {
+  return parseResponse<ResearchJobResponse>(await fetch(`${API_BASE_URL}/api/research/jobs/${jobId}`, { cache: "no-store" }));
+}
+
+export function researchJobEventsUrl(jobId: string) {
+  return `${API_BASE_URL}/api/research/jobs/${jobId}/events`;
+}
+
+export async function runCommand(
+  text: string,
+  mode: AppMode,
+  inputSource: "typed" | "voice" | "quick_action" = "typed",
+  depth?: "quick" | "deep" | "academic",
+  astraPro = false,
+) {
   return parseResponse<CommandResponse>(
     await fetch(`${API_BASE_URL}/api/command`, {
       method: "POST",
@@ -268,6 +529,7 @@ export async function runCommand(text: string, mode: AppMode, inputSource: "type
         mode,
         input_source: inputSource,
         depth,
+        astra_pro: astraPro,
       }),
     }),
   );
@@ -350,6 +612,61 @@ export async function generateStudyArtifact(artifactType: StudyArtifactType, top
         report_id: reportId ?? null,
         document_id: documentId ?? null,
       }),
+    }),
+  );
+}
+
+export async function listMockTests() {
+  return parseResponse<MockTest[]>(await fetch(`${API_BASE_URL}/api/mock-tests`, { cache: "no-store" }));
+}
+
+export async function getMockTest(testId: string) {
+  return parseResponse<MockTest>(await fetch(`${API_BASE_URL}/api/mock-tests/${testId}`, { cache: "no-store" }));
+}
+
+export async function generateMockTest(
+  topic: string,
+  questionCount = 10,
+  difficulty: MockTestDifficulty = "mixed",
+  durationMinutes = 20,
+  sourceRequirement: MockTestSourceRequirement = "none",
+  sourceMode: MockTestSourceMode = "uploaded_docs",
+  exam = "",
+  subject = "",
+) {
+  return parseResponse<{ test: MockTest; setup_required: string[] }>(
+    await fetch(`${API_BASE_URL}/api/mock-tests/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic,
+        exam,
+        subject,
+        question_count: questionCount,
+        difficulty,
+        mode: "mcq",
+        duration_minutes: durationMinutes,
+        source_requirement: sourceRequirement,
+        source_mode: sourceMode,
+      }),
+    }),
+  );
+}
+
+export async function startMockTest(testId: string) {
+  return parseResponse<{ test: MockTest; attempt: MockAttempt }>(
+    await fetch(`${API_BASE_URL}/api/mock-tests/${testId}/start`, {
+      method: "POST",
+    }),
+  );
+}
+
+export async function submitMockTest(testId: string, attemptId: string, answers: Record<string, number>, elapsedSeconds: number) {
+  return parseResponse<MockTestSubmitResponse>(
+    await fetch(`${API_BASE_URL}/api/mock-tests/${testId}/attempts/${attemptId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers, elapsed_seconds: elapsedSeconds }),
     }),
   );
 }
