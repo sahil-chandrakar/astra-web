@@ -83,6 +83,7 @@ import {
   getMockTest,
   getResearchJob,
   getReports,
+  getVoiceStatus,
   HealthResponse,
   listAutomationRecipes,
   listDocuments,
@@ -110,6 +111,7 @@ import {
   testAgentCommands,
   updateMemory,
   uploadDocument,
+  VoiceStatusResponse,
   warmVoice,
 } from "@/lib/api";
 
@@ -277,7 +279,7 @@ const modeCopy: Record<AppMode, { title: string; label: string; placeholder: str
     title: "Settings",
     label: "Setup",
     placeholder: "Ask about provider or voice setup...",
-    empty: "Provider status is shown in the left rail.",
+    empty: "System status, voice preferences, local data, and safety controls are ready.",
   },
 };
 
@@ -384,6 +386,7 @@ function writeVoiceOutputMutedPreference(muted: boolean) {
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatusResponse | null>(null);
   const [agents, setAgents] = useState<AgentDescriptor[]>([]);
   const [agentAbilities, setAgentAbilities] = useState<AgentAbility[]>([]);
   const [agentAudit, setAgentAudit] = useState<AgentAuditEntry[]>([]);
@@ -410,6 +413,8 @@ export default function Home() {
   const [automationRecipes, setAutomationRecipes] = useState<AutomationRecipe[]>([]);
   const [automationBusy, setAutomationBusy] = useState(false);
   const [automationCancelBusy, setAutomationCancelBusy] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState<AgentNotice | null>(null);
   const [newMemoryText, setNewMemoryText] = useState("");
   const [newMemoryCategory, setNewMemoryCategory] = useState<AgentMemoryCategory>("general");
   const [memoryEdit, setMemoryEdit] = useState<AgentMemoryItem | null>(null);
@@ -435,7 +440,7 @@ export default function Home() {
   const [, setCriticNotes] = useState<string[]>([]);
   const [setupRequired, setSetupRequired] = useState<string[]>([]);
   const [, setResearchReport] = useState<ResearchReport | null>(null);
-  const [, setReports] = useState<ResearchReport[]>([]);
+  const [reports, setReports] = useState<ResearchReport[]>([]);
   const [commandDraft, setCommandDraft] = useState("");
   const [commandInFlight, setCommandInFlight] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -598,10 +603,12 @@ export default function Home() {
       listDocuments().catch(() => []),
       listStudyArtifacts().catch(() => []),
       listAutomationRecipes().catch(() => []),
+      getVoiceStatus().catch(() => null),
     ])
-      .then(([healthResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse]) => {
+      .then(([healthResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, voiceStatusResponse]) => {
         if (cancelled) return;
         setHealth(healthResponse);
+        setVoiceStatus(voiceStatusResponse);
         setAgents(agentResponse);
         setReports(reportResponse);
         setAgentAbilities(abilityResponse);
@@ -639,6 +646,43 @@ export default function Home() {
     setMockTests(mockTestResponse);
     setSelectedDocumentId((current) => current || documentResponse[0]?.id || "");
     setActiveMockTest((current) => current ?? mockTestResponse[0] ?? null);
+  }, []);
+
+  const refreshSettingsData = useCallback(async () => {
+    setSettingsBusy(true);
+    setSettingsNotice(null);
+    try {
+      const [healthResponse, voiceResponse, reportResponse, automationRecipeResponse] = await Promise.all([
+        getHealth(),
+        getVoiceStatus().catch(() => null),
+        getReports().catch(() => []),
+        listAutomationRecipes().catch(() => []),
+        refreshAgentData(),
+      ]);
+      setHealth(healthResponse);
+      setVoiceStatus(voiceResponse);
+      setReports(reportResponse);
+      setAutomationRecipes(automationRecipeResponse);
+      setSettingsNotice({ tone: "success", message: "Settings status refreshed." });
+    } catch (error) {
+      setSettingsNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not refresh settings." });
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [refreshAgentData]);
+
+  const warmVoiceFromSettings = useCallback(async () => {
+    setSettingsBusy(true);
+    setSettingsNotice(null);
+    try {
+      const response = await warmVoice(PREFERRED_PIPER_VOICE);
+      setVoiceStatus(response);
+      setSettingsNotice({ tone: "success", message: response.message || "Voice engine warmed." });
+    } catch (error) {
+      setSettingsNotice({ tone: "error", message: error instanceof Error ? error.message : "Voice warmup failed." });
+    } finally {
+      setSettingsBusy(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -1133,6 +1177,17 @@ export default function Home() {
       setAgentBusyId(null);
     }
   }, [refreshAgentData]);
+
+  const runSettingsDiagnostics = useCallback(async () => {
+    setSettingsBusy(true);
+    setSettingsNotice(null);
+    try {
+      await runAgentSelfTests();
+      setSettingsNotice({ tone: "success", message: "Agent command diagnostics completed." });
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [runAgentSelfTests]);
 
   const saveMemoryFromPanel = useCallback(async () => {
     const text = newMemoryText.trim();
@@ -1894,7 +1949,7 @@ export default function Home() {
           </section>
         </aside>
 
-        <section className={`dashboard-grid ${activePanel === "sources" ? "automation-dashboard" : ""}`}>
+        <section className={`dashboard-grid ${activePanel === "sources" ? "automation-dashboard" : ""} ${activePanel === "settings" ? "settings-dashboard" : ""}`}>
           <section className="cockpit-panel hud-panel">
             <div className="cockpit-title-row">
               <div>
@@ -1920,6 +1975,35 @@ export default function Home() {
                 onConfirm={(approved, options) => void confirmActiveAutomation(approved, options)}
                 onCancelDownload={() => void cancelActiveAutomation()}
                 cancelBusy={automationCancelBusy}
+              />
+            ) : activePanel === "settings" ? (
+              <SettingsWorkspace
+                agentAbilities={agentAbilities}
+                astraPro={astraProEffective}
+                astraProLocked={astraProLocked}
+                automationRecipes={automationRecipes}
+                automationRun={automationRun}
+                backendUrl={API_BASE_URL}
+                busy={settingsBusy || agentBusyId === "test_all"}
+                documents={documents}
+                handsFree={handsFree}
+                health={health}
+                memoryItems={memoryItems}
+                mockTests={mockTests}
+                notice={settingsNotice}
+                onOpenAgentPanel={setAgentToolPanel}
+                onOpenAutomation={() => setActivePanel("sources")}
+                onRefresh={() => void refreshSettingsData()}
+                onRunDiagnostics={() => void runSettingsDiagnostics()}
+                onToggleAstraPro={toggleAstraPro}
+                onToggleHandsFree={toggleHandsFree}
+                onToggleVoiceOutput={toggleVoiceOutputMuted}
+                onWarmVoice={() => void warmVoiceFromSettings()}
+                providerRows={providerRows}
+                reports={reports}
+                studyArtifacts={studyArtifacts}
+                voiceOutputMuted={voiceOutputMuted}
+                voiceStatus={voiceStatus}
               />
             ) : (
               <div className={`voice-stage ${activePanel === "agents" ? "agent-voice-stage" : ""}`}>
@@ -2012,7 +2096,7 @@ export default function Home() {
 
           </section>
 
-          {activePanel !== "sources" && (
+          {activePanel !== "sources" && activePanel !== "settings" && (
           <aside className="transcript-panel transcript-rail hud-panel">
             <div className="transcript-head">
               <div>
@@ -2152,7 +2236,7 @@ export default function Home() {
           </aside>
           )}
 
-          {activePanel !== "sources" && (
+          {activePanel !== "sources" && activePanel !== "settings" && (
           <div className="timeline-panel timeline-strip timeline-fullwidth">
             <div className="timeline-head">
               <div>
@@ -2302,6 +2386,386 @@ export default function Home() {
   );
 }
 
+type SettingsSectionId = "general" | "voice" | "automation" | "data" | "safety" | "providers";
+
+type SettingsSectionConfig = {
+  id: SettingsSectionId;
+  label: string;
+  detail: string;
+  icon: IconType;
+  healthy: boolean;
+  status: string;
+};
+
+function SettingsWorkspace({
+  agentAbilities,
+  astraPro,
+  astraProLocked,
+  automationRecipes,
+  automationRun,
+  backendUrl,
+  busy,
+  documents,
+  handsFree,
+  health,
+  memoryItems,
+  mockTests,
+  notice,
+  onOpenAgentPanel,
+  onOpenAutomation,
+  onRefresh,
+  onRunDiagnostics,
+  onToggleAstraPro,
+  onToggleHandsFree,
+  onToggleVoiceOutput,
+  onWarmVoice,
+  providerRows,
+  reports,
+  studyArtifacts,
+  voiceOutputMuted,
+  voiceStatus,
+}: {
+  agentAbilities: AgentAbility[];
+  astraPro: boolean;
+  astraProLocked: boolean;
+  automationRecipes: AutomationRecipe[];
+  automationRun: AutomationRun | null;
+  backendUrl: string;
+  busy: boolean;
+  documents: DocumentRecord[];
+  handsFree: boolean;
+  health: HealthResponse | null;
+  memoryItems: AgentMemoryItem[];
+  mockTests: MockTest[];
+  notice: AgentNotice | null;
+  onOpenAgentPanel: (panel: AgentToolPanel) => void;
+  onOpenAutomation: () => void;
+  onRefresh: () => void;
+  onRunDiagnostics: () => void;
+  onToggleAstraPro: () => void;
+  onToggleHandsFree: () => void;
+  onToggleVoiceOutput: () => void;
+  onWarmVoice: () => void;
+  providerRows: Array<{ name: string; label: string; enabled: boolean }>;
+  reports: ResearchReport[];
+  studyArtifacts: StudyArtifact[];
+  voiceOutputMuted: boolean;
+  voiceStatus: VoiceStatusResponse | null;
+}) {
+  const configuredProviders = providerRows.filter((provider) => provider.enabled).length;
+  const missingProviders = providerRows.filter((provider) => !provider.enabled);
+  const passedAbilities = agentAbilities.filter((ability) => ability.test_status === "passed").length;
+  const failedAbilities = agentAbilities.filter((ability) => ability.test_status === "failed").length;
+  const automationStatus = automationRun?.status.replaceAll("_", " ") ?? "idle";
+  const systemReady = health?.status === "ok" && missingProviders.length === 0;
+  const safetySummary = failedAbilities === 0 ? "Guardrails are clean" : `${failedAbilities} checks need attention`;
+  const voiceReady = Boolean(voiceStatus?.enabled);
+  const activeAutomationText = automationRun ? `${automationStatus}: ${shortAutomationText(automationRun.prompt, 84)}` : "No active automation run.";
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
+  const settingsSections: SettingsSectionConfig[] = [
+    {
+      id: "general",
+      label: "General",
+      detail: "Backend, model, and app health",
+      icon: Settings,
+      healthy: systemReady,
+      status: systemReady ? "Ready" : "Check",
+    },
+    {
+      id: "voice",
+      label: "Voice",
+      detail: "Speech, hands-free, and pro mode",
+      icon: Volume2,
+      healthy: voiceReady,
+      status: voiceReady ? "Ready" : "Setup",
+    },
+    {
+      id: "automation",
+      label: "Automation",
+      detail: "Browser, Windows, and saved flows",
+      icon: Wand2,
+      healthy: automationRun?.status !== "error",
+      status: automationRun ? automationStatus : "Idle",
+    },
+    {
+      id: "data",
+      label: "Data",
+      detail: "Local memories, docs, and study files",
+      icon: Database,
+      healthy: true,
+      status: "Local",
+    },
+    {
+      id: "safety",
+      label: "Safety",
+      detail: "Permissions and blocked actions",
+      icon: ShieldCheck,
+      healthy: failedAbilities === 0,
+      status: failedAbilities ? "Check" : "Guarded",
+    },
+    {
+      id: "providers",
+      label: "Providers",
+      detail: "API capability setup",
+      icon: Server,
+      healthy: missingProviders.length === 0,
+      status: `${configuredProviders}/${providerRows.length}`,
+    },
+  ];
+  const activeSettings = settingsSections.find((section) => section.id === activeSection) ?? settingsSections[0];
+  const ActiveSettingsIcon = activeSettings.icon;
+
+  return (
+    <section className="settings-workspace settings-workspace-control" aria-label="Astra settings control center">
+      <header className="settings-topbar">
+        <div className="settings-title-block">
+          <h2>Astra control center</h2>
+          <p>Focused controls for the app, voice, automation, local data, and safety.</p>
+        </div>
+        <div className="settings-top-actions">
+          <button type="button" onClick={onRefresh} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Refresh
+          </button>
+          <button type="button" onClick={onRunDiagnostics} disabled={busy}>
+            <TestTube2 className="h-4 w-4" />
+            Diagnostics
+          </button>
+        </div>
+        {notice && <div className={`settings-notice ${notice.tone}`}>{notice.message}</div>}
+      </header>
+
+      <section className="settings-status-strip" aria-label="Settings summary">
+        <SettingsSummaryItem icon={Server} label="Backend" value={health?.status ?? "offline"} ok={health?.status === "ok"} />
+        <SettingsSummaryItem icon={Brain} label="Model" value={health?.model ?? "not loaded"} ok={Boolean(health?.model)} />
+        <SettingsSummaryItem icon={Volume2} label="Voice" value={voiceReady ? "ready" : "setup"} ok={voiceReady} />
+        <SettingsSummaryItem icon={ShieldCheck} label="Safety" value={failedAbilities ? `${failedAbilities} issue` : "guarded"} ok={failedAbilities === 0} />
+      </section>
+
+      <section className="settings-control-layout">
+        <aside className="settings-section-rail" aria-label="Settings sections">
+          {settingsSections.map((section) => (
+            <SettingsSectionButton key={section.id} section={section} active={activeSection === section.id} onClick={() => setActiveSection(section.id)} />
+          ))}
+        </aside>
+
+        <section className="settings-detail-panel" aria-label={`${activeSettings.label} settings`}>
+          <div className="settings-detail-head">
+            <div className="settings-detail-icon">
+              <ActiveSettingsIcon className="h-6 w-6" />
+            </div>
+            <div>
+              <span>{activeSettings.label}</span>
+              <strong>{activeSettings.detail}</strong>
+            </div>
+            <SettingsStatusPill ok={activeSettings.healthy} label={activeSettings.status} />
+          </div>
+
+          {activeSection === "general" && (
+            <div className="settings-section-body">
+              <div className="settings-metric-grid">
+                <SettingsMetric icon={Server} label="Backend" value={backendUrl.replace(/^https?:\/\//, "")} meta={health?.status ?? "offline"} />
+                <SettingsMetric icon={Brain} label="Active model" value={health?.model ?? "Not loaded"} meta="LLM runtime" />
+                <SettingsMetric icon={Network} label="Providers" value={`${configuredProviders}/${providerRows.length}`} meta={missingProviders.length ? "Needs setup" : "Ready"} />
+              </div>
+              <SettingsRow icon={RefreshCw} title="Refresh status" detail="Reload backend health, providers, voice state, and local counts." action={
+                <button type="button" onClick={onRefresh} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Refresh
+                </button>
+              } />
+              <SettingsRow icon={TestTube2} title="Run diagnostics" detail="Run command registry and safety checks from one place." action={
+                <button type="button" onClick={onRunDiagnostics} disabled={busy}>
+                  <TestTube2 className="h-4 w-4" />
+                  Run
+                </button>
+              } />
+            </div>
+          )}
+
+          {activeSection === "voice" && (
+            <div className="settings-section-body">
+              <SettingsRow icon={Volume2} title="Voice package" detail={`${voiceStatus?.voice ?? PREFERRED_PIPER_VOICE} - ${voiceStatus?.cached ? "cached locally" : "not cached"}`} meta={voiceStatus?.message ?? "Voice status pending"} />
+              <SettingsToggle label="Astra Pro" detail={astraProLocked ? "Always on in agent mode" : "Use the pro model for richer answers"} enabled={astraPro} disabled={astraProLocked} onClick={onToggleAstraPro} />
+              <SettingsToggle label="Voice output" detail={voiceOutputMuted ? "Astra responses are muted" : "Astra can speak responses"} enabled={!voiceOutputMuted} onClick={onToggleVoiceOutput} />
+              <SettingsToggle label="Hands-free" detail={handsFree ? "Browser speech recognition is listening" : "Microphone listener is stopped"} enabled={handsFree} onClick={onToggleHandsFree} />
+              <SettingsRow icon={Mic} title="Warm voice" detail="Prepare the local voice engine before a spoken response." action={
+                <button type="button" onClick={onWarmVoice} disabled={busy || !voiceStatus?.enabled}>
+                  <Volume2 className="h-4 w-4" />
+                  Warm
+                </button>
+              } />
+            </div>
+          )}
+
+          {activeSection === "automation" && (
+            <div className="settings-section-body">
+              <div className="settings-metric-grid">
+                <SettingsMetric icon={Wand2} label="Saved flows" value={automationRecipes.length.toString()} meta="Recipes" />
+                <SettingsMetric icon={History} label="Current run" value={automationStatus} meta={automationRun ? "Active history" : "No run"} />
+              </div>
+              <SettingsRow icon={Wand2} title="Open Automation tab" detail="Run browser, Windows, Python, and permitted download workflows." action={
+                <button type="button" onClick={onOpenAutomation}>
+                  <ExternalLink className="h-4 w-4" />
+                  Open
+                </button>
+              } />
+              <SettingsRow icon={History} title="Latest automation" detail={activeAutomationText} meta={automationRun ? "Run state" : "Idle"} />
+              <SettingsRow icon={ShieldCheck} title="Permission gates" detail="Downloads, file writes, form submissions, and private account actions require approval." meta="Required" />
+            </div>
+          )}
+
+          {activeSection === "data" && (
+            <div className="settings-section-body">
+              <div className="settings-shortcut-grid">
+                <SettingsShortcutButton icon={Database} label="Memories" value={memoryItems.length} onClick={() => onOpenAgentPanel("memory")} />
+                <SettingsShortcutButton icon={FileUp} label="Documents" value={documents.length} onClick={() => onOpenAgentPanel("documents")} />
+                <SettingsShortcutButton icon={FileText} label="Reports" value={reports.length} onClick={() => onOpenAgentPanel("catalog")} />
+                <SettingsShortcutButton icon={Brain} label="Study" value={studyArtifacts.length} onClick={() => onOpenAgentPanel("study")} />
+                <SettingsShortcutButton icon={TestTube2} label="Mock tests" value={mockTests.length} onClick={() => onOpenAgentPanel("mock_test")} />
+                <SettingsShortcutButton icon={Wand2} label="Automations" value={automationRecipes.length} onClick={onOpenAutomation} />
+              </div>
+              <SettingsRow icon={FolderOpen} title="Local-first data" detail="Astra keeps memory, documents, study material, mock tests, and automation recipes in the local app workspace." meta="Private" />
+            </div>
+          )}
+
+          {activeSection === "safety" && (
+            <div className="settings-section-body">
+              <div className="settings-metric-grid">
+                <SettingsMetric icon={CheckCircle2} label="Passing checks" value={passedAbilities.toString()} meta={`${agentAbilities.length || 0} total`} />
+                <SettingsMetric icon={AlertTriangle} label="Attention" value={failedAbilities.toString()} meta={safetySummary} />
+              </div>
+              <SettingsRow icon={CheckCircle2} title="Allowed tools" detail="Browser control, Windows utilities, local Python sandbox, and permitted downloads." meta="Scoped" />
+              <SettingsRow icon={Lock} title="Blocked actions" detail="Credential entry, payments, unsafe sites, destructive file actions, and hidden elevated commands." meta="Protected" />
+              <SettingsRow icon={Shield} title="Safety check" detail="Re-run command tests and guardrail diagnostics." action={
+                <button type="button" onClick={onRunDiagnostics} disabled={busy}>
+                  <TestTube2 className="h-4 w-4" />
+                  Check
+                </button>
+              } />
+            </div>
+          )}
+
+          {activeSection === "providers" && (
+            <div className="settings-section-body">
+              <SettingsRow icon={Network} title="Provider readiness" detail={`${configuredProviders}/${providerRows.length} providers are configured.`} meta={missingProviders.length ? "Needs setup" : "Ready"} />
+              <div className="settings-provider-lines">
+                {providerRows.map((provider) => (
+                  <SettingsProviderLine key={provider.name} provider={provider} />
+                ))}
+              </div>
+              {missingProviders.length > 0 && (
+                <SettingsRow icon={AlertTriangle} title="Missing provider keys" detail={missingProviders.map((provider) => provider.label).join(", ")} meta="Check env" tone="warn" />
+              )}
+            </div>
+          )}
+        </section>
+      </section>
+    </section>
+  );
+}
+
+function SettingsStatusPill({ ok, label }: { ok: boolean; label: string }) {
+  return <span className={`settings-status-pill ${ok ? "ready" : "warn"}`}>{label}</span>;
+}
+
+function SettingsSummaryItem({ icon: Icon, label, value, ok }: { icon: IconType; label: string; value: string; ok: boolean }) {
+  return (
+    <div className={`settings-summary-item ${ok ? "ready" : "warn"}`}>
+      <Icon className="h-4 w-4" />
+      <span>{label}</span>
+      <strong title={value}>{shortAutomationText(value, 26)}</strong>
+    </div>
+  );
+}
+
+function SettingsSectionButton({ section, active, onClick }: { section: SettingsSectionConfig; active: boolean; onClick: () => void }) {
+  const Icon = section.icon;
+  return (
+    <button type="button" className={`settings-section-button ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}>
+      <Icon className="h-5 w-5" />
+      <span>
+        <strong>{section.label}</strong>
+        <small>{section.detail}</small>
+      </span>
+      <SettingsStatusPill ok={section.healthy} label={section.status} />
+    </button>
+  );
+}
+
+function SettingsToggle({ label, detail, enabled, disabled = false, onClick }: { label: string; detail: string; enabled: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={`settings-toggle ${enabled ? "enabled" : ""}`} onClick={onClick} disabled={disabled}>
+      <span>
+        <strong>{label}</strong>
+        <small>{detail}</small>
+      </span>
+      <i aria-hidden="true" />
+    </button>
+  );
+}
+
+function SettingsMetric({ icon: Icon, label, value, meta }: { icon: IconType; label: string; value: string; meta: string }) {
+  return (
+    <div className="settings-metric">
+      <Icon className="h-5 w-5" />
+      <span>{label}</span>
+      <strong title={value}>{shortAutomationText(value, 38)}</strong>
+      <small>{meta}</small>
+    </div>
+  );
+}
+
+function SettingsRow({
+  icon: Icon,
+  title,
+  detail,
+  meta,
+  action,
+  tone,
+}: {
+  icon: IconType;
+  title: string;
+  detail: string;
+  meta?: string;
+  action?: React.ReactNode;
+  tone?: "warn";
+}) {
+  return (
+    <div className={`settings-row ${tone ?? ""}`}>
+      <div className="settings-row-icon">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div>
+        <strong>{title}</strong>
+        <p title={detail}>{detail}</p>
+      </div>
+      {meta && <span className="settings-row-meta">{meta}</span>}
+      {action && <div className="settings-row-action">{action}</div>}
+    </div>
+  );
+}
+
+function SettingsShortcutButton({ icon: Icon, label, value, onClick }: { icon: IconType; label: string; value: number; onClick: () => void }) {
+  return (
+    <button type="button" className="settings-shortcut-button" onClick={onClick}>
+      <Icon className="h-5 w-5" />
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </button>
+  );
+}
+
+function SettingsProviderLine({ provider }: { provider: { name: string; label: string; enabled: boolean } }) {
+  return (
+    <div className={`settings-provider-line ${provider.enabled ? "ready" : "warn"}`}>
+      <span className={provider.enabled ? "status-dot ready" : "status-dot pending"} />
+      <strong>{provider.label}</strong>
+      <small>{provider.enabled ? "Configured" : "Missing"}</small>
+    </div>
+  );
+}
+
 function AutomationWorkspace({
   draft,
   busy,
@@ -2328,11 +2792,16 @@ function AutomationWorkspace({
   cancelBusy: boolean;
 }) {
   const trimmedDraft = draft.trim();
-  const visibleItems = useMemo(() => buildAutomationTimeline(events).slice(-14), [events]);
+  const visibleItems = useMemo(() => buildAutomationTimeline(events).slice(-24), [events]);
   const isWaiting = run?.status === "waiting_for_login" || run?.status === "waiting_for_user";
   const needsConfirmation = run?.status === "confirmation_required";
   const isTerminal = run ? ["complete", "error", "cancelled"].includes(run.status) : false;
   const statusLabel = run?.status.replaceAll("_", " ") ?? "Ready";
+  const statusTone = automationStatusTone(run?.status, busy);
+  const latestEvent = events[events.length - 1] ?? null;
+  const activeTool = latestEvent ? automationToolLabel(latestEvent.type) : "Idle";
+  const elapsedLabel = run ? formatAutomationElapsed(run.created_at, run.updated_at, !isTerminal) : "--";
+  const phaseSummary = useMemo(() => summarizeAutomationPhases(events), [events]);
   const confirmationMessage = typeof run?.confirmation?.message === "string" ? run.confirmation.message : "Astra needs approval to continue.";
   const isVideoDownloadConfirmation = run?.confirmation?.kind === "video_download_permission";
   const videoUrl = typeof run?.confirmation?.video_url === "string" ? run.confirmation.video_url : "";
@@ -2352,12 +2821,18 @@ function AutomationWorkspace({
         <div className="automation-chat-head">
           <div>
             <span className="surface-title">Automation Chat</span>
-            <strong>Prompt the agent</strong>
+            <strong>{run ? shortAutomationText(run.prompt, 76) : "Prompt the agent"}</strong>
           </div>
-          <span className={`automation-working-pill ${isTerminal ? "done" : ""}`}>
+          <span className={`automation-working-pill ${statusTone} ${isTerminal ? "done" : ""}`}>
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
             {statusLabel}
           </span>
+        </div>
+        <div className="automation-command-strip" aria-label="Automation run summary">
+          <AutomationMetric label="Status" value={statusLabel} tone={statusTone} />
+          <AutomationMetric label="Active tool" value={activeTool} />
+          <AutomationMetric label="Events" value={String(events.length)} />
+          <AutomationMetric label="Elapsed" value={elapsedLabel} />
         </div>
         <div className="automation-chat-feed" aria-live="polite">
           {!run && visibleItems.length === 0 ? (
@@ -2371,19 +2846,14 @@ function AutomationWorkspace({
               {run && (
                 <article className="automation-chat-message user">
                   <span>You</span>
-                  <p>{run.prompt}</p>
+                  <p title={run.prompt}>{shortAutomationText(run.prompt, 180)}</p>
                 </article>
               )}
               {visibleItems.map((item) =>
                 item.kind === "download" ? (
                   <AutomationDownloadCard key={item.key} item={item} canCancel={run?.status === "running"} cancelBusy={cancelBusy} onCancel={onCancelDownload} />
                 ) : (
-                  <article key={item.event.id} className={`automation-chat-message astra ${item.event.type}`}>
-                    <span>{item.event.type.replaceAll("_", " ")}</span>
-                    <p>{item.event.message}</p>
-                    <AutomationDownloadProgress event={item.event} />
-                    <AutomationEventLinks event={item.event} />
-                  </article>
+                  <AutomationEventCard key={item.event.id} event={item.event} />
                 ),
               )}
             </>
@@ -2455,41 +2925,173 @@ function AutomationWorkspace({
         </form>
       </section>
 
-      <section className="automation-new-panel">
-        <div className="automation-panel-eyebrow">
-          <Plus className="h-4 w-4" />
-          <span>New Automation</span>
+      <AutomationInspector
+        activeTool={activeTool}
+        busy={busy}
+        elapsedLabel={elapsedLabel}
+        events={events}
+        latestEvent={latestEvent}
+        onDraftChange={onDraftChange}
+        onRun={onRun}
+        phaseSummary={phaseSummary}
+        recipes={recipes}
+        statusLabel={statusLabel}
+        statusTone={statusTone}
+        trimmedDraft={trimmedDraft}
+      />
+    </section>
+  );
+}
+
+function AutomationMetric({ label, value, tone = "idle" }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className={`automation-metric ${tone}`}>
+      <span>{label}</span>
+      <strong title={value}>{shortAutomationText(value, 28)}</strong>
+    </div>
+  );
+}
+
+function AutomationInspector({
+  activeTool,
+  busy,
+  elapsedLabel,
+  events,
+  latestEvent,
+  onDraftChange,
+  onRun,
+  phaseSummary,
+  recipes,
+  statusLabel,
+  statusTone,
+  trimmedDraft,
+}: {
+  activeTool: string;
+  busy: boolean;
+  elapsedLabel: string;
+  events: AutomationEvent[];
+  latestEvent: AutomationEvent | null;
+  onDraftChange: (value: string) => void;
+  onRun: (prompt: string, createRecipe?: boolean, recipeId?: string | null) => void;
+  phaseSummary: AutomationPhaseSummary;
+  recipes: AutomationRecipe[];
+  statusLabel: string;
+  statusTone: string;
+  trimmedDraft: string;
+}) {
+  return (
+    <aside className="automation-inspector-panel" aria-label="Automation run inspector">
+      <section className="automation-inspector-hero">
+        <div className="automation-panel-header">
+          <div className="automation-panel-eyebrow">
+            <Activity className="h-4 w-4" />
+            <span>Run Inspector</span>
+          </div>
+          <small>{events.length} events</small>
         </div>
-        <h2>Create a reusable workflow</h2>
-        <p>Describe what should happen, when Astra should ask permission, and what result should be saved for next time.</p>
-        <button
-          type="button"
-          onClick={() =>
-            onDraftChange(
-              "Create a new reusable automation. Goal: . Tools allowed: browser, computer access, and Python. Ask before risky actions. Save the final steps so I can run it again.",
-            )
-          }
-          disabled={busy}
-        >
-          <Wand2 className="h-4 w-4" />
-          Draft New Automation
-        </button>
-        <button type="button" onClick={() => onRun(trimmedDraft || "Create a new reusable automation.", true)} disabled={busy}>
-          <Save className="h-4 w-4" />
-          Create From Prompt
-        </button>
-        {recipes.length > 0 && (
+        <div className={`automation-status-card ${statusTone}`}>
+          <div className="automation-status-orb">
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+          </div>
+          <div>
+            <span>{statusLabel}</span>
+            <strong title={latestEvent?.message ?? "Waiting for your first automation."}>
+              {latestEvent ? shortAutomationText(latestEvent.message, 82) : "Ready for a browser, desktop, or Python task."}
+            </strong>
+          </div>
+        </div>
+        <div className="automation-inspector-metrics">
+          <AutomationMetric label="Tool" value={activeTool} />
+          <AutomationMetric label="Elapsed" value={elapsedLabel} />
+        </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>Phases</span>
+          <small>Live trace</small>
+        </div>
+        <div className="automation-phase-grid">
+          <AutomationPhaseCard icon={Activity} label="Plan" count={phaseSummary.plan} />
+          <AutomationPhaseCard icon={Globe2} label="Browser" count={phaseSummary.browser} />
+          <AutomationPhaseCard icon={Terminal} label="Desktop" count={phaseSummary.desktop} />
+          <AutomationPhaseCard icon={Download} label="Download" count={phaseSummary.download} />
+        </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>Quick starts</span>
+          <small>Prefill</small>
+        </div>
+        <div className="automation-quick-grid">
+          {AUTOMATION_QUICK_STARTS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.label} type="button" onClick={() => onDraftChange(item.prompt)} disabled={busy} title={item.prompt}>
+                <Icon className="h-4 w-4" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>New workflow</span>
+          <small>{recipes.length} saved</small>
+        </div>
+        <p className="automation-inspector-copy">Turn the current prompt into a reusable flow, or draft a new one with safety gates included.</p>
+        <div className="automation-panel-actions">
+          <button
+            type="button"
+            onClick={() =>
+              onDraftChange(
+                "Create a new reusable automation. Goal: . Tools allowed: browser, computer access, and Python. Ask before risky actions. Save the final steps so I can run it again.",
+              )
+            }
+            disabled={busy}
+          >
+            <Wand2 className="h-4 w-4" />
+            Draft
+          </button>
+          <button type="button" onClick={() => onRun(trimmedDraft || "Create a new reusable automation.", true)} disabled={busy}>
+            <Save className="h-4 w-4" />
+            Save Flow
+          </button>
+        </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>Saved workflows</span>
+          <small>{recipes.length ? "Click to run" : "Empty"}</small>
+        </div>
+        {recipes.length > 0 ? (
           <div className="automation-recipe-list">
             {recipes.slice(0, 5).map((recipe) => (
               <button key={recipe.id} type="button" onClick={() => onRun(recipe.prompt, false, recipe.id)} disabled={busy}>
                 <strong>{recipe.name}</strong>
-                <small>{recipe.prompt}</small>
+                <small>{shortAutomationText(recipe.prompt, 86)}</small>
               </button>
             ))}
           </div>
+        ) : (
+          <div className="automation-recipe-empty">No saved workflows yet.</div>
         )}
       </section>
-    </section>
+    </aside>
+  );
+}
+
+function AutomationPhaseCard({ icon: Icon, label, count }: { icon: React.ComponentType<{ className?: string }>; label: string; count: number }) {
+  return (
+    <div className={count > 0 ? "automation-phase-card active" : "automation-phase-card"}>
+      <Icon className="h-4 w-4" />
+      <span>{label}</span>
+      <strong>{count}</strong>
+    </div>
   );
 }
 
@@ -2497,7 +3099,23 @@ type AutomationTimelineItem =
   | { kind: "event"; event: AutomationEvent }
   | { kind: "download"; key: string; events: AutomationEvent[] };
 
+type AutomationPhaseSummary = {
+  plan: number;
+  browser: number;
+  desktop: number;
+  download: number;
+};
+
 const DOWNLOAD_LIFECYCLE_EVENTS = new Set(["download_start", "download_progress", "download_retry", "download_complete", "download_error", "download_cancelled"]);
+
+const AUTOMATION_QUICK_STARTS = [
+  { label: "Set alarm", icon: Timer, prompt: "Open alarm and set it for 6:00 PM today" },
+  { label: "Calculator", icon: Terminal, prompt: "Open calculator and calculate 45 * 6" },
+  { label: "Explorer", icon: FolderOpen, prompt: "Open file explorer in Downloads" },
+  { label: "Web task", icon: Globe2, prompt: "Open YouTube and search for CodeWithHarry latest video" },
+  { label: "Download", icon: Download, prompt: "Download this permitted public video: " },
+  { label: "Save flow", icon: Save, prompt: "Create a new reusable automation. Goal: " },
+] as const;
 
 function buildAutomationTimeline(events: AutomationEvent[]): AutomationTimelineItem[] {
   const items: AutomationTimelineItem[] = [];
@@ -2532,6 +3150,30 @@ function automationDownloadKey(event: AutomationEvent) {
   return folderPath || sourceUrl || "download";
 }
 
+function AutomationEventCard({ event }: { event: AutomationEvent }) {
+  const Icon = automationEventIcon(event.type);
+  const messageLimit = event.type.includes("error") ? 220 : 150;
+  const message = shortAutomationText(event.message, messageLimit);
+  const eventTime = formatAutomationEventTime(event.timestamp);
+
+  return (
+    <article className={`automation-chat-message astra automation-timeline-row ${event.type} ${automationEventTone(event.type)}`}>
+      <div className="automation-event-icon" aria-hidden="true">
+        <Icon className="h-3.5 w-3.5" />
+      </div>
+      <div className="automation-event-body">
+        <div className="automation-event-topline">
+          <span>{formatAutomationEventLabel(event.type)}</span>
+          {eventTime && <time dateTime={event.timestamp}>{eventTime}</time>}
+        </div>
+        <p title={event.message}>{message}</p>
+        <AutomationDownloadProgress event={event} />
+        <AutomationEventLinks event={event} />
+      </div>
+    </article>
+  );
+}
+
 function AutomationDownloadCard({
   item,
   canCancel,
@@ -2554,7 +3196,7 @@ function AutomationDownloadCard({
   return (
     <article className={`automation-chat-message astra automation-download-card ${latestEvent.type}`}>
       <span>{title}</span>
-      <p>{message}</p>
+      <p title={latestEvent.type === "download_progress" ? startEvent?.message || latestEvent.message : latestEvent.message}>{message}</p>
       <AutomationDownloadProgress event={{ ...progressEvent, data: { ...mergedEvent.data, ...progressEvent.data } }} running={isRunning} />
       <AutomationEventLinks event={mergedEvent} />
       {isRunning && canCancel && (
@@ -2592,8 +3234,8 @@ function AutomationEventLinks({ event }: { event: AutomationEvent }) {
   return (
     <div className="automation-event-links">
       {(filename || filePath) && (
-        <span className="automation-event-file">
-          {shortAutomationText(filename || "Downloaded file", 86)}
+        <span className="automation-event-file" title={filename || filePath}>
+          {shortAutomationText(filename || "Downloaded file", 58)}
         </span>
       )}
       {url && (
@@ -2622,6 +3264,88 @@ function shortAutomationText(text: string, maxLength: number) {
   const compact = text.replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) return compact;
   return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
+function summarizeAutomationPhases(events: AutomationEvent[]): AutomationPhaseSummary {
+  return events.reduce<AutomationPhaseSummary>(
+    (summary, event) => {
+      if (event.type === "queued" || event.type === "planning" || event.type === "plan_ready" || event.type === "step") summary.plan += 1;
+      if (event.type === "browser" || event.type.includes("search")) summary.browser += 1;
+      if (event.type.startsWith("windows") || event.type === "calculator" || event.type === "file_explorer" || event.type === "alarm_set") summary.desktop += 1;
+      if (DOWNLOAD_LIFECYCLE_EVENTS.has(event.type)) summary.download += 1;
+      return summary;
+    },
+    { plan: 0, browser: 0, desktop: 0, download: 0 },
+  );
+}
+
+function automationStatusTone(status: AutomationRun["status"] | undefined, busy: boolean) {
+  if (!status) return "idle";
+  if (status === "complete") return "done";
+  if (status === "error" || status === "cancelled") return "failed";
+  if (status === "confirmation_required" || status === "waiting_for_login" || status === "waiting_for_user") return "attention";
+  if (busy || status === "queued" || status === "planning" || status === "running") return "running";
+  return "idle";
+}
+
+function automationEventIcon(type: string) {
+  if (type.includes("error") || type === "blocked") return AlertTriangle;
+  if (type === "complete" || type === "alarm_set" || type === "download_complete") return CheckCircle2;
+  if (type.includes("confirmation") || type.includes("waiting")) return ShieldCheck;
+  if (type === "browser" || type.includes("search")) return Globe2;
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set") return Terminal;
+  if (type === "queued" || type === "planning" || type === "plan_ready" || type === "step") return Activity;
+  return Circle;
+}
+
+function automationEventTone(type: string) {
+  if (type.includes("error") || type === "blocked") return "danger";
+  if (type.includes("confirmation") || type.includes("waiting")) return "attention";
+  if (type === "complete" || type === "alarm_set") return "success";
+  if (type === "browser") return "browser";
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer") return "desktop";
+  return "neutral";
+}
+
+function formatAutomationEventLabel(type: string) {
+  const labels: Record<string, string> = {
+    alarm_set: "alarm set",
+    file_explorer: "file explorer",
+    plan_ready: "plan ready",
+    waiting_for_login: "waiting for login",
+    waiting_for_user: "waiting for user",
+  };
+  return labels[type] ?? type.replaceAll("_", " ");
+}
+
+function formatAutomationEventTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function automationToolLabel(type: string) {
+  if (DOWNLOAD_LIFECYCLE_EVENTS.has(type)) return "Downloader";
+  if (type === "browser" || type.includes("search")) return "Browser";
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set") return "Windows";
+  if (type.includes("confirmation") || type.includes("waiting")) return "Safety gate";
+  if (type === "queued" || type === "planning" || type === "plan_ready" || type === "step") return "Planner";
+  if (type === "complete") return "Result";
+  if (type.includes("error") || type === "blocked") return "Error";
+  return "Agent";
+}
+
+function formatAutomationElapsed(createdAt: string, updatedAt: string, live: boolean) {
+  const start = new Date(createdAt).getTime();
+  const end = live ? Date.now() : new Date(updatedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return "--";
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${rest}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function AutomationDownloadProgress({ event, running = false }: { event: AutomationEvent; running?: boolean }) {
