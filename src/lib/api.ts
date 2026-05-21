@@ -9,6 +9,8 @@ export type AgentCommandTestStatus = "untested" | "passed" | "failed";
 export type AutomationRunStatus = "queued" | "planning" | "running" | "waiting_for_login" | "waiting_for_user" | "confirmation_required" | "complete" | "error" | "cancelled";
 export type AgentMemoryCategory = "course" | "project" | "goal" | "preference" | "general";
 export type StudyArtifactType = "notes" | "flashcards" | "quiz" | "revision_plan" | "viva_questions";
+export type LlmProviderId = "cerebras" | "nvidia";
+export type LlmProfileName = "fast" | "pro";
 
 export type Source = {
   title: string;
@@ -225,7 +227,26 @@ export type HealthResponse = {
   app: string;
   model: string;
   models?: Record<string, string>;
+  llm_profiles?: Record<LlmProfileName, LlmProfileConfig>;
   providers: Record<string, boolean>;
+};
+
+export type LlmProfileConfig = {
+  provider: LlmProviderId;
+  model: string;
+};
+
+export type LlmProviderStatus = {
+  id: LlmProviderId;
+  label: string;
+  configured: boolean;
+  models: string[];
+  base_url: string;
+};
+
+export type LlmSettingsResponse = {
+  profiles: Record<LlmProfileName, LlmProfileConfig>;
+  providers: LlmProviderStatus[];
 };
 
 export type ChatResponse = {
@@ -345,6 +366,20 @@ export async function getHealth() {
 
 export async function getAgents() {
   return parseResponse<AgentDescriptor[]>(await fetch(`${API_BASE_URL}/api/agents`, { cache: "no-store" }));
+}
+
+export async function getLlmSettings() {
+  return parseResponse<LlmSettingsResponse>(await fetch(`${API_BASE_URL}/api/llm/settings`, { cache: "no-store" }));
+}
+
+export async function updateLlmSettings(profiles: Record<LlmProfileName, LlmProfileConfig>) {
+  return parseResponse<LlmSettingsResponse>(
+    await fetch(`${API_BASE_URL}/api/llm/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profiles }),
+    }),
+  );
 }
 
 export async function getAgentAbilities() {

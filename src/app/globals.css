@@ -288,6 +288,53 @@ button {
   padding: 9px 10px;
 }
 
+.user-strip.pro-account-card {
+  position: relative;
+  min-height: 62px;
+  overflow: hidden;
+  border-color: rgba(91, 223, 242, 0.28);
+  background:
+    linear-gradient(135deg, rgba(87, 242, 146, 0.16), rgba(91, 223, 242, 0.08) 52%, rgba(255, 178, 46, 0.12)),
+    rgba(255, 255, 255, 0.04);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22), inset 0 0 24px rgba(87, 242, 146, 0.05);
+}
+
+.user-strip.pro-account-card::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(110deg, transparent 0 34%, rgba(255, 255, 255, 0.2) 48%, transparent 62%);
+  opacity: 0.42;
+  transform: translateX(-125%);
+  animation: pro-card-sheen 5.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.user-strip.pro-account-card::after {
+  position: absolute;
+  inset: auto 10px 8px;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, rgba(87, 242, 146, 0.1), rgba(91, 223, 242, 0.65), rgba(255, 178, 46, 0.15));
+  pointer-events: none;
+}
+
+.pro-card-icon {
+  position: relative;
+  z-index: 1;
+  border-color: rgba(91, 223, 242, 0.36);
+  color: #06110d;
+  background: linear-gradient(135deg, #57f292, #5bdff2 58%, #ffb22e);
+  box-shadow: 0 0 22px rgba(87, 242, 146, 0.22);
+}
+
+.pro-card-copy,
+.pro-card-status,
+.user-strip.pro-account-card svg {
+  position: relative;
+  z-index: 1;
+}
+
 .user-strip strong,
 .user-strip span {
   display: block;
@@ -301,6 +348,39 @@ button {
   margin-top: 3px;
   color: var(--emerald);
   font-size: 11px;
+}
+
+.user-strip .pro-card-copy {
+  min-width: 0;
+}
+
+.user-strip .pro-card-copy strong {
+  color: #f8fffb;
+  font-size: 13px;
+}
+
+.user-strip .pro-card-copy span {
+  overflow: hidden;
+  max-width: 126px;
+  color: #a7f8d4;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-strip .pro-card-status {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 0 auto;
+  border: 1px solid rgba(255, 178, 46, 0.34);
+  border-radius: 999px;
+  padding: 4px 7px;
+  color: #ffe0a1;
+  background: rgba(255, 178, 46, 0.09);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .dashboard-grid {
@@ -2691,6 +2771,77 @@ button {
   font-weight: 900;
 }
 
+.settings-llm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-llm-profile {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(156, 226, 217, 0.13);
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.settings-llm-profile.warn {
+  border-color: rgba(255, 178, 46, 0.24);
+}
+
+.settings-llm-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-llm-head svg {
+  color: var(--cyan);
+}
+
+.settings-llm-head div,
+.settings-llm-profile label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-llm-head strong {
+  color: #f2faf9;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.settings-llm-head span,
+.settings-llm-profile label span {
+  color: #84939e;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.settings-llm-profile select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid rgba(156, 226, 217, 0.16);
+  border-radius: 8px;
+  padding: 0 11px;
+  color: #edf7f7;
+  background: rgba(4, 12, 16, 0.78);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-llm-profile select:focus {
+  outline: 2px solid rgba(91, 223, 242, 0.32);
+  outline-offset: 1px;
+}
+
 .settings-provider-lines {
   display: grid;
   gap: 8px;
@@ -2777,7 +2928,8 @@ button {
 
   .settings-status-strip,
   .settings-metric-grid,
-  .settings-shortcut-grid {
+  .settings-shortcut-grid,
+  .settings-llm-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3360,8 +3512,8 @@ button {
 
 .command-form {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr) 92px;
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 9px;
   padding: 10px 18px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -3370,60 +3522,267 @@ button {
   padding: 12px 2px 0;
 }
 
-.command-form input {
+.command-chat-box {
   min-width: 0;
-  height: 38px;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(156, 226, 217, 0.16);
   border-radius: 8px;
-  padding: 0 12px;
-  color: #f5fbff;
-  background: rgba(255, 255, 255, 0.045);
-  outline: none;
+  background:
+    linear-gradient(135deg, rgba(91, 223, 242, 0.035), rgba(87, 242, 146, 0.025)),
+    rgba(255, 255, 255, 0.038);
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.12);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
-.command-form input:focus {
+.command-chat-box:focus-within {
   border-color: rgba(87, 242, 146, 0.5);
-  box-shadow: 0 0 0 3px rgba(87, 242, 146, 0.08);
+  background:
+    linear-gradient(135deg, rgba(91, 223, 242, 0.06), rgba(87, 242, 146, 0.045)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(87, 242, 146, 0.08), inset 0 0 22px rgba(0, 0, 0, 0.14);
+}
+
+.command-chat-box textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  max-height: 156px;
+  resize: none;
+  border: 0;
+  border-radius: inherit;
+  padding: 11px 12px;
+  color: #f5fbff;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(87, 242, 146, 0.4) transparent;
+}
+
+.command-chat-box textarea::placeholder {
+  color: #71808c;
+}
+
+.command-controls {
+  display: grid;
+  grid-template-columns: minmax(196px, 208px) 92px;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 
 .astra-pro-toggle {
-  display: inline-flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 48px;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  min-height: 38px;
-  border: 1px solid var(--line);
+  min-width: 0;
+  min-height: 44px;
+  overflow: hidden;
+  border: 1px solid rgba(91, 223, 242, 0.28);
   border-radius: 8px;
-  color: #dce5e8;
-  background: rgba(255, 255, 255, 0.045);
+  padding: 0 9px;
+  color: #f1fbff;
+  background:
+    linear-gradient(135deg, rgba(87, 242, 146, 0.11), rgba(91, 223, 242, 0.05)),
+    rgba(255, 255, 255, 0.04);
   font-size: 12px;
   font-weight: 900;
-  transition: 160ms ease;
+  box-shadow: inset 0 0 18px rgba(87, 242, 146, 0.04);
+  isolation: isolate;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.astra-pro-toggle::after {
+  position: absolute;
+  inset: auto 58px 7px 42px;
+  z-index: 0;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, rgba(87, 242, 146, 0.28), rgba(91, 223, 242, 0.7), transparent);
+  opacity: 0.55;
+}
+
+.astra-pro-toggle::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  content: "";
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(87, 242, 146, 0.7), rgba(91, 223, 242, 0.72), rgba(255, 178, 46, 0.58), rgba(87, 242, 146, 0.7));
+  background-size: 260% 100%;
+  opacity: 0;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  padding: 1px;
+  pointer-events: none;
+}
+
+.astra-pro-aura {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(110deg, transparent 0 30%, rgba(255, 255, 255, 0.18) 45%, rgba(91, 223, 242, 0.18) 52%, transparent 66%);
+  opacity: 0.6;
+  transform: translateX(-135%);
+  animation: pro-button-sheen 4.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.astra-pro-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 12px, rgba(255, 255, 255, 0.045) 12px 13px, transparent 13px 26px),
+    radial-gradient(circle at 10% 50%, rgba(87, 242, 146, 0.14), transparent 46%);
+  opacity: 0;
+  transform: translateX(-18%);
+  animation: pro-scanline 5.6s linear infinite;
+  pointer-events: none;
 }
 
 .astra-pro-mark {
+  position: relative;
+  z-index: 1;
   display: inline-grid;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  border: 1px solid rgba(255, 178, 46, 0.36);
+  border: 1px solid rgba(255, 178, 46, 0.42);
   border-radius: 7px;
-  color: var(--amber);
-  background: rgba(255, 178, 46, 0.09);
-  box-shadow: inset 0 0 12px rgba(255, 178, 46, 0.08);
+  color: #06110d;
+  background: linear-gradient(135deg, #ffca65, #57f292 56%, #5bdff2);
+  box-shadow: 0 0 18px rgba(87, 242, 146, 0.2), inset 0 0 12px rgba(255, 255, 255, 0.18);
+}
+
+.astra-pro-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+  line-height: 1.05;
+  text-align: left;
+}
+
+.astra-pro-copy strong,
+.astra-pro-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.astra-pro-copy strong {
+  color: #f8fffb;
+  font-size: 12px;
+}
+
+.astra-pro-copy small {
+  color: #9fb1b8;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.astra-pro-switch {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 48px;
+  height: 24px;
+  align-items: center;
+  border: 1px solid rgba(159, 177, 184, 0.28);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: #9fb1b8;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.22);
+  font-size: 8px;
+  font-weight: 1000;
+  text-align: right;
+  transition: border-color 180ms ease, color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.astra-pro-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #9fb1b8;
+  box-shadow: 0 0 0 rgba(87, 242, 146, 0);
+  transition: left 220ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
 .astra-pro-toggle.active {
-  border-color: rgba(255, 178, 46, 0.48);
-  color: #04100b;
-  background: linear-gradient(135deg, var(--amber), #5bdff2);
+  border-color: rgba(87, 242, 146, 0.62);
+  color: #f9fffb;
+  background:
+    linear-gradient(135deg, rgba(87, 242, 146, 0.26), rgba(91, 223, 242, 0.18) 54%, rgba(255, 178, 46, 0.18)),
+    rgba(4, 16, 13, 0.92);
+  box-shadow: 0 0 22px rgba(87, 242, 146, 0.14), inset 0 0 24px rgba(87, 242, 146, 0.08);
+}
+
+.astra-pro-toggle.active::before {
+  opacity: 0.58;
+  animation: pro-border-flow 3.8s linear infinite;
 }
 
 .astra-pro-toggle.active .astra-pro-mark {
-  border-color: rgba(4, 16, 11, 0.22);
+  border-color: rgba(255, 255, 255, 0.35);
   color: #04100b;
-  background: rgba(255, 255, 255, 0.28);
-  box-shadow: inset 0 0 14px rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 20px rgba(91, 223, 242, 0.36), inset 0 0 14px rgba(255, 255, 255, 0.24);
+  animation: pro-mark-pulse 2.4s ease-in-out infinite;
+}
+
+.astra-pro-toggle.active .astra-pro-copy small {
+  color: #b9ffe1;
+}
+
+.astra-pro-toggle.active .astra-pro-aura {
+  animation-duration: 3s;
+}
+
+.astra-pro-toggle.active .astra-pro-scan {
+  opacity: 0.54;
+}
+
+.astra-pro-toggle.active .astra-pro-switch {
+  border-color: rgba(87, 242, 146, 0.64);
+  color: #05120d;
+  background: linear-gradient(135deg, #57f292, #5bdff2);
+  box-shadow: 0 0 18px rgba(87, 242, 146, 0.2), inset 0 0 12px rgba(255, 255, 255, 0.16);
+  text-align: left;
+}
+
+.astra-pro-toggle.active .astra-pro-switch-knob {
+  left: 27px;
+  background: #05120d;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.38);
+}
+
+.astra-pro-toggle.inactive {
+  border-color: rgba(159, 177, 184, 0.22);
+  background:
+    linear-gradient(135deg, rgba(159, 177, 184, 0.08), rgba(91, 223, 242, 0.025)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.astra-pro-toggle.inactive .astra-pro-aura {
+  opacity: 0.22;
+  animation-duration: 6.8s;
+}
+
+.astra-pro-toggle.inactive .astra-pro-mark {
+  color: #cbd8de;
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(159, 177, 184, 0.28);
+  box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.04);
 }
 
 .astra-pro-toggle.locked,
@@ -3433,12 +3792,94 @@ button {
 }
 
 .astra-pro-toggle:hover {
-  border-color: var(--line-strong);
-  background: rgba(255, 178, 46, 0.1);
+  border-color: rgba(91, 223, 242, 0.56);
+  background:
+    linear-gradient(135deg, rgba(87, 242, 146, 0.18), rgba(91, 223, 242, 0.1)),
+    rgba(255, 255, 255, 0.055);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18), inset 0 0 22px rgba(87, 242, 146, 0.06);
+  transform: translateY(-1px);
 }
 
 .astra-pro-toggle.active:hover {
-  background: linear-gradient(135deg, #ffc85c, #78edfa);
+  background:
+    linear-gradient(135deg, rgba(87, 242, 146, 0.32), rgba(91, 223, 242, 0.22) 56%, rgba(255, 178, 46, 0.24)),
+    rgba(4, 16, 13, 0.95);
+}
+
+.astra-pro-toggle:disabled:not(.locked) .astra-pro-aura,
+.astra-pro-toggle:disabled:not(.locked) .astra-pro-mark,
+.astra-pro-toggle:disabled:not(.locked)::before,
+.astra-pro-toggle:disabled:not(.locked) .astra-pro-scan {
+  animation: none;
+}
+
+@keyframes pro-button-sheen {
+  0%,
+  54% {
+    transform: translateX(-135%);
+  }
+
+  78%,
+  100% {
+    transform: translateX(135%);
+  }
+}
+
+@keyframes pro-card-sheen {
+  0%,
+  62% {
+    transform: translateX(-125%);
+  }
+
+  84%,
+  100% {
+    transform: translateX(125%);
+  }
+}
+
+@keyframes pro-border-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 260% 50%;
+  }
+}
+
+@keyframes pro-mark-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes pro-scanline {
+  0% {
+    transform: translateX(-20%);
+  }
+
+  100% {
+    transform: translateX(20%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .astra-pro-aura,
+  .user-strip.pro-account-card::before,
+  .astra-pro-toggle.active .astra-pro-mark,
+  .astra-pro-toggle.active::before,
+  .astra-pro-scan {
+    animation: none;
+  }
+
+  .astra-pro-toggle:hover {
+    transform: none;
+  }
 }
 
 .command-form button[type="submit"] {
@@ -3452,7 +3893,7 @@ button {
 }
 
 button:disabled,
-.command-form input:disabled {
+.command-chat-box textarea:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
@@ -6193,6 +6634,7 @@ button:disabled,
   .brand-lockup div:last-child,
   .nav-button span,
   .rail-widget,
+  .pro-card-status,
   .user-strip div,
   .user-strip svg:last-child {
     display: none;

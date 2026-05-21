@@ -79,6 +79,7 @@ import {
   getAgents,
   getAutomationRun,
   getHealth,
+  getLlmSettings,
   getMemory,
   getMockTest,
   getResearchJob,
@@ -89,6 +90,8 @@ import {
   listDocuments,
   listMockTests,
   listStudyArtifacts,
+  LlmProfileName,
+  LlmSettingsResponse,
   MockAttempt,
   MockTest,
   MockTestDifficulty,
@@ -109,6 +112,7 @@ import {
   submitMockTest,
   synthesizeSpeech,
   testAgentCommands,
+  updateLlmSettings,
   updateMemory,
   uploadDocument,
   VoiceStatusResponse,
@@ -285,12 +289,79 @@ const modeCopy: Record<AppMode, { title: string; label: string; placeholder: str
 
 const providerLabels: Record<string, string> = {
   cerebras: "Cerebras",
+  nvidia: "NVIDIA NIM",
   tavily: "Tavily",
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
   duckduckgo_fallback: "DuckDuckGo",
   piper_local: "Piper Voice",
 };
+
+const cerebrasFastModels = [
+  "llama3.1-8b",
+];
+
+const cerebrasProModels = [
+  "zai-glm-4.7",
+  "gpt-oss-120b",
+  "qwen-3-235b-a22b-instruct-2507",
+];
+
+const nvidiaFastModels = [
+  "openai/gpt-oss-20b",
+  "deepseek-ai/deepseek-v4-flash",
+  "nvidia/nvidia-nemotron-nano-9b-v2",
+  "nvidia/nemotron-3-nano-30b-a3b",
+  "microsoft/phi-4-mini-flash-reasoning",
+  "microsoft/phi-4-mini-instruct",
+  "meta/llama-3.1-8b-instruct",
+  "meta/llama-3.2-3b-instruct",
+  "mistralai/mistral-7b-instruct-v0.3",
+  "qwen/qwen2.5-coder-32b-instruct",
+  "stepfun-ai/step-3-5-flash",
+];
+
+const nvidiaProModels = [
+  "moonshotai/kimi-k2.6",
+  "z-ai/glm5.1",
+  "z-ai/glm4.7",
+  "deepseek-ai/deepseek-v4-pro",
+  "openai/gpt-oss-120b",
+  "qwen/qwen3-coder-480b-a35b-instruct",
+  "qwen/qwen3-next-80b-a3b-thinking",
+  "qwen/qwen3-5-122b-a10b",
+  "nvidia/nemotron-3-super-120b-a12b",
+  "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+  "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+  "minimaxai/minimax-m2.7",
+  "moonshotai/kimi-k2-thinking",
+  "moonshotai/kimi-k2-instruct",
+  "mistralai/mistral-nemotron",
+  "mistralai/mixtral-8x22b-instruct",
+];
+
+function modelOptionsForProfile(
+  provider: LlmSettingsResponse["providers"][number] | undefined,
+  profileName: LlmProfileName,
+) {
+  if (!provider) return [];
+  const preferences: Record<string, Record<LlmProfileName, string[]>> = {
+    cerebras: {
+      fast: cerebrasFastModels,
+      pro: cerebrasProModels,
+    },
+    nvidia: {
+      fast: nvidiaFastModels,
+      pro: nvidiaProModels,
+    },
+  };
+  const preferred = preferences[provider.id]?.[profileName];
+  if (!preferred) return provider.models;
+
+  const available = new Set(provider.models);
+  const curated = preferred.filter((model) => available.has(model));
+  return curated.length ? curated : provider.models;
+}
 
 function getSpeechRecognitionErrorMessage(error: string) {
   switch (error) {
@@ -386,6 +457,7 @@ function writeVoiceOutputMutedPreference(muted: boolean) {
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [llmSettings, setLlmSettings] = useState<LlmSettingsResponse | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatusResponse | null>(null);
   const [agents, setAgents] = useState<AgentDescriptor[]>([]);
   const [agentAbilities, setAgentAbilities] = useState<AgentAbility[]>([]);
@@ -476,6 +548,7 @@ export default function Home() {
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const transcriptAutoScrollRef = useRef(true);
   const transcriptScrollFrameRef = useRef<number | null>(null);
+  const commandTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const scrollTranscriptToBottom = useCallback((force = false) => {
     const list = transcriptListRef.current;
@@ -518,6 +591,15 @@ export default function Home() {
     scrollTranscriptToBottom(false);
   }, [agentBusyId, confirmation, scrollTranscriptToBottom]);
 
+  useLayoutEffect(() => {
+    const textarea = commandTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, 156);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 156 ? "auto" : "hidden";
+  }, [activePanel, commandDraft]);
+
   useEffect(() => {
     const feed = transcriptFeedRef.current;
     if (!feed || typeof ResizeObserver === "undefined") return;
@@ -553,7 +635,7 @@ export default function Home() {
         }))
       : [];
 
-    const preferred = ["cerebras", "tavily", "openalex", "semantic_scholar", "piper_local"];
+    const preferred = ["cerebras", "nvidia", "tavily", "openalex", "semantic_scholar", "piper_local"];
     return preferred.map((name) => loadedRows.find((row) => row.name === name) ?? { name, label: providerLabels[name], enabled: false });
   }, [health]);
 
@@ -595,6 +677,7 @@ export default function Home() {
 
     Promise.all([
       getHealth(),
+      getLlmSettings().catch(() => null),
       getAgents(),
       getReports().catch(() => []),
       getAgentAbilities().catch(() => []),
@@ -605,9 +688,10 @@ export default function Home() {
       listAutomationRecipes().catch(() => []),
       getVoiceStatus().catch(() => null),
     ])
-      .then(([healthResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, voiceStatusResponse]) => {
+      .then(([healthResponse, llmSettingsResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, voiceStatusResponse]) => {
         if (cancelled) return;
         setHealth(healthResponse);
+        setLlmSettings(llmSettingsResponse);
         setVoiceStatus(voiceStatusResponse);
         setAgents(agentResponse);
         setReports(reportResponse);
@@ -659,7 +743,9 @@ export default function Home() {
         listAutomationRecipes().catch(() => []),
         refreshAgentData(),
       ]);
+      const llmSettingsResponse = await getLlmSettings().catch(() => null);
       setHealth(healthResponse);
+      setLlmSettings(llmSettingsResponse);
       setVoiceStatus(voiceResponse);
       setReports(reportResponse);
       setAutomationRecipes(automationRecipeResponse);
@@ -684,6 +770,30 @@ export default function Home() {
       setSettingsBusy(false);
     }
   }, []);
+
+  const updateLlmProfile = useCallback(
+    async (profileName: LlmProfileName, provider: string, model: string) => {
+      if (!llmSettings || provider !== "cerebras" && provider !== "nvidia") return;
+      setSettingsBusy(true);
+      setSettingsNotice(null);
+      try {
+        const profiles = {
+          ...llmSettings.profiles,
+          [profileName]: { provider, model },
+        };
+        const response = await updateLlmSettings(profiles);
+        const healthResponse = await getHealth();
+        setLlmSettings(response);
+        setHealth(healthResponse);
+        setSettingsNotice({ tone: "success", message: `${profileName === "fast" ? "Fast" : "Pro"} model updated.` });
+      } catch (error) {
+        setSettingsNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not update LLM settings." });
+      } finally {
+        setSettingsBusy(false);
+      }
+    },
+    [llmSettings],
+  );
 
   useEffect(() => {
     if (!handsFree || listenStartedAt === null) {
@@ -1937,15 +2047,16 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="user-strip">
-            <div className="brand-star small">
+          <section className="user-strip pro-account-card">
+            <div className="brand-star small pro-card-icon">
               <Sparkles className="h-5 w-5" />
             </div>
-            <div>
-              <strong>Astra User</strong>
-              <span>Pro Plan</span>
+            <div className="pro-card-copy">
+              <strong>Astra Pro</strong>
+              <span>Plan unlocked</span>
             </div>
-            <ChevronRight className="ml-auto h-4 w-4 text-zinc-500" />
+            <span className="pro-card-status">Plan</span>
+            <ChevronRight className="ml-auto h-4 w-4 text-emerald-200" />
           </section>
         </aside>
 
@@ -1988,6 +2099,7 @@ export default function Home() {
                 documents={documents}
                 handsFree={handsFree}
                 health={health}
+                llmSettings={llmSettings}
                 memoryItems={memoryItems}
                 mockTests={mockTests}
                 notice={settingsNotice}
@@ -1995,6 +2107,7 @@ export default function Home() {
                 onOpenAutomation={() => setActivePanel("sources")}
                 onRefresh={() => void refreshSettingsData()}
                 onRunDiagnostics={() => void runSettingsDiagnostics()}
+                onUpdateLlmProfile={(profile, provider, model) => void updateLlmProfile(profile, provider, model)}
                 onToggleAstraPro={toggleAstraPro}
                 onToggleHandsFree={toggleHandsFree}
                 onToggleVoiceOutput={toggleVoiceOutputMuted}
@@ -2202,6 +2315,7 @@ export default function Home() {
               onSubmit={(event) => {
                 event.preventDefault();
                 const text = commandDraft.trim();
+                if (!text) return;
                 setCommandDraft("");
                 if (activePanel === "research") {
                   void submitResearchJob(text, "typed", "deep");
@@ -2210,28 +2324,50 @@ export default function Home() {
                 }
               }}
             >
-              <button
-                type="button"
-                className={`astra-pro-toggle ${astraProEffective ? "active" : ""} ${astraProLocked ? "locked" : ""}`}
-                onClick={toggleAstraPro}
-                aria-pressed={astraProEffective}
-                title={astraProLocked ? "Astra Pro is always on in agent mode" : astraPro ? "Disable Astra Pro" : "Enable Astra Pro"}
-                disabled={commandInFlight || astraProLocked}
-              >
-                <span className="astra-pro-mark" aria-hidden="true">
-                  <Sparkles className="h-3.5 w-3.5" />
-                </span>
-                Astra Pro
-              </button>
-              <input
-                value={commandDraft}
-                onChange={(event) => setCommandDraft(event.target.value)}
-                placeholder={currentMode.placeholder}
-                disabled={commandInFlight}
-              />
-              <button type="submit" disabled={commandInFlight || !commandDraft.trim()}>
-                {commandInFlight ? "Working" : "Send"}
-              </button>
+              <div className="command-chat-box">
+                <textarea
+                  ref={commandTextareaRef}
+                  value={commandDraft}
+                  onChange={(event) => setCommandDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder={currentMode.placeholder}
+                  disabled={commandInFlight}
+                  rows={1}
+                />
+              </div>
+              <div className="command-controls">
+                <button
+                  type="button"
+                  className={`astra-pro-toggle ${astraProEffective ? "active" : "inactive"} ${astraProLocked ? "locked" : ""}`}
+                  onClick={toggleAstraPro}
+                  aria-pressed={astraProEffective}
+                  aria-label={astraProLocked ? "Astra Pro mode is on for agent mode" : astraProEffective ? "Astra Pro mode is on. Click to turn it off." : "Astra Pro mode is off. Click to turn it on."}
+                  title={astraProLocked ? "Astra Pro is always on in agent mode" : astraPro ? "Disable Astra Pro" : "Enable Astra Pro"}
+                  disabled={commandInFlight || astraProLocked}
+                >
+                  <span className="astra-pro-aura" aria-hidden="true" />
+                  <span className="astra-pro-scan" aria-hidden="true" />
+                  <span className="astra-pro-mark" aria-hidden="true">
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="astra-pro-copy">
+                    <strong>Pro Mode</strong>
+                    <small>{astraProLocked ? "Locked on" : astraProEffective ? "Pro model" : "Fast model"}</small>
+                  </span>
+                  <span className="astra-pro-switch" aria-hidden="true">
+                    <span className="astra-pro-switch-knob" />
+                    <span>{astraProEffective ? "ON" : "OFF"}</span>
+                  </span>
+                </button>
+                <button type="submit" disabled={commandInFlight || !commandDraft.trim()}>
+                  {commandInFlight ? "Working" : "Send"}
+                </button>
+              </div>
             </form>
           </aside>
           )}
@@ -2408,6 +2544,7 @@ function SettingsWorkspace({
   documents,
   handsFree,
   health,
+  llmSettings,
   memoryItems,
   mockTests,
   notice,
@@ -2415,6 +2552,7 @@ function SettingsWorkspace({
   onOpenAutomation,
   onRefresh,
   onRunDiagnostics,
+  onUpdateLlmProfile,
   onToggleAstraPro,
   onToggleHandsFree,
   onToggleVoiceOutput,
@@ -2435,6 +2573,7 @@ function SettingsWorkspace({
   documents: DocumentRecord[];
   handsFree: boolean;
   health: HealthResponse | null;
+  llmSettings: LlmSettingsResponse | null;
   memoryItems: AgentMemoryItem[];
   mockTests: MockTest[];
   notice: AgentNotice | null;
@@ -2442,6 +2581,7 @@ function SettingsWorkspace({
   onOpenAutomation: () => void;
   onRefresh: () => void;
   onRunDiagnostics: () => void;
+  onUpdateLlmProfile: (profile: LlmProfileName, provider: string, model: string) => void;
   onToggleAstraPro: () => void;
   onToggleHandsFree: () => void;
   onToggleVoiceOutput: () => void;
@@ -2649,6 +2789,26 @@ function SettingsWorkspace({
           {activeSection === "providers" && (
             <div className="settings-section-body">
               <SettingsRow icon={Network} title="Provider readiness" detail={`${configuredProviders}/${providerRows.length} providers are configured.`} meta={missingProviders.length ? "Needs setup" : "Ready"} />
+              {llmSettings && (
+                <div className="settings-llm-grid">
+                  <LlmProfileControl
+                    busy={busy}
+                    label="Fast model"
+                    profile={llmSettings.profiles.fast}
+                    profileName="fast"
+                    providers={llmSettings.providers}
+                    onChange={onUpdateLlmProfile}
+                  />
+                  <LlmProfileControl
+                    busy={busy}
+                    label="Pro model"
+                    profile={llmSettings.profiles.pro}
+                    profileName="pro"
+                    providers={llmSettings.providers}
+                    onChange={onUpdateLlmProfile}
+                  />
+                </div>
+              )}
               <div className="settings-provider-lines">
                 {providerRows.map((provider) => (
                   <SettingsProviderLine key={provider.name} provider={provider} />
@@ -2662,6 +2822,66 @@ function SettingsWorkspace({
         </section>
       </section>
     </section>
+  );
+}
+
+function LlmProfileControl({
+  busy,
+  label,
+  profile,
+  profileName,
+  providers,
+  onChange,
+}: {
+  busy: boolean;
+  label: string;
+  profile: LlmSettingsResponse["profiles"][LlmProfileName];
+  profileName: LlmProfileName;
+  providers: LlmSettingsResponse["providers"];
+  onChange: (profile: LlmProfileName, provider: string, model: string) => void;
+}) {
+  const currentProvider = providers.find((provider) => provider.id === profile.provider) ?? providers[0];
+  const currentModels = modelOptionsForProfile(currentProvider, profileName);
+  const modelValue = currentModels.includes(profile.model) ? profile.model : currentModels[0] ?? profile.model;
+  const providerId = currentProvider?.id ?? profile.provider;
+
+  return (
+    <div className={`settings-llm-profile ${currentProvider?.configured ? "ready" : "warn"}`}>
+      <div className="settings-llm-head">
+        <Brain className="h-5 w-5" />
+        <div>
+          <strong>{label}</strong>
+          <span>{currentProvider?.configured ? "Configured" : "Needs key"}</span>
+        </div>
+      </div>
+      <label>
+        <span>Provider</span>
+        <select
+          value={providerId}
+          disabled={busy || !providers.length}
+          onChange={(event) => {
+            const nextProvider = providers.find((provider) => provider.id === event.target.value);
+            if (nextProvider) onChange(profileName, nextProvider.id, modelOptionsForProfile(nextProvider, profileName)[0] ?? "");
+          }}
+        >
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>Model</span>
+        <select value={modelValue} disabled={busy || !currentModels.length} onChange={(event) => onChange(profileName, providerId, event.target.value)}>
+          {currentModels.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 }
 
