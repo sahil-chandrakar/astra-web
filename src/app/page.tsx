@@ -122,6 +122,8 @@ import {
   VoiceStatusResponse,
   warmVoice,
 } from "@/lib/api";
+import { useAnimationCleanup } from "./hooks/useAnimationCleanup";
+import { useCountUp } from "./hooks/useCountUp";
 
 type Message = {
   role: "user" | "astra" | "agent" | "system";
@@ -546,6 +548,7 @@ export default function Home() {
   const transcriptAutoScrollRef = useRef(true);
   const transcriptScrollFrameRef = useRef<number | null>(null);
   const commandTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const animCleanupRef = useAnimationCleanup();
 
   const scrollTranscriptToBottom = useCallback((force = false) => {
     const list = transcriptListRef.current;
@@ -641,6 +644,8 @@ export default function Home() {
   const researchFlowItems = useMemo(() => buildDashboardTimelineItems(timelineItems, activePanel), [activePanel, timelineItems]);
 
   const confidenceScore = researchConfidence ?? 92;
+  const animatedConfidence = useCountUp(confidenceScore);
+  const animatedAbilityCount = useCountUp(agentAbilities.length);
   const currentMode = modeCopy[activePanel];
   const astraProLocked = activePanel === "agents";
   const astraProEffective = astraPro || astraProLocked;
@@ -2049,7 +2054,7 @@ export default function Home() {
   }
 
   return (
-    <main className="mission-shell min-h-screen text-zinc-50">
+    <main ref={animCleanupRef} className="mission-shell min-h-screen text-zinc-50">
       <div className="mission-frame">
         <aside className="nav-rail hud-panel">
           <div className="brand-lockup">
@@ -2190,7 +2195,7 @@ export default function Home() {
 
                 <div className="confidence-card">
                   <span>{activePanel === "agents" ? "Commands" : "Confidence"}</span>
-                  <strong>{activePanel === "agents" ? agentAbilities.length : `${confidenceScore}%`}</strong>
+                  <strong>{activePanel === "agents" ? animatedAbilityCount : `${animatedConfidence}%`}</strong>
                   <MiniWave tone="listening" active />
                 </div>
 
@@ -2368,6 +2373,7 @@ export default function Home() {
             </div>
             {commandInFlight && (
               <div className="transcript-status-strip" aria-live="polite">
+                <div className="progress-bar-indeterminate" />
                 <div className="row-icon">
                   <Loader2 className="h-4 w-4 animate-spin" />
                 </div>
@@ -2376,7 +2382,7 @@ export default function Home() {
                     <strong>{currentTimelineItem?.label ?? "Astra"}</strong>
                     <span>Now</span>
                   </div>
-                  <p>{currentTimelineItem?.detail ?? "Working on the command..."}</p>
+                  <p className="stream-cursor">{currentTimelineItem?.detail ?? "Working on the command..."}</p>
                 </div>
                 {!voiceOutputMuted && <MiniWave active tone="talking" />}
               </div>
@@ -2435,7 +2441,7 @@ export default function Home() {
                     <span>{astraProEffective ? "ON" : "OFF"}</span>
                   </span>
                 </button>
-                <button type="submit" disabled={commandInFlight || !commandDraft.trim()}>
+                <button type="submit" disabled={commandInFlight || !commandDraft.trim()} className={commandDraft.trim() ? "has-content" : ""}>
                   {commandInFlight ? "Working" : "Send"}
                 </button>
               </div>
@@ -5842,7 +5848,7 @@ function TranscriptRow({
   const Icon = icon;
   const lines = text.split("\n").filter(Boolean);
   return (
-    <div className={`transcript-row motion-stagger-item ${tone} ${active ? "active" : ""}`} style={motionIndexStyle(motionIndex)}>
+    <div className={`transcript-row motion-stagger-item ${tone} ${active ? "active" : ""} ${active && tone === "emerald" ? "user-enter" : ""} ${active && tone === "cyan" ? "astra-enter" : ""}`} style={motionIndexStyle(motionIndex)}>
       <div className="row-icon">
         <Icon className="h-4 w-4" />
       </div>
@@ -6100,7 +6106,7 @@ function ResearchFlowStep({ step, isLast, index }: { step: ResearchFlowItem; isL
 
   return (
     <div
-      className={`research-flow-step motion-stagger-item ${step.complete ? "complete" : ""} ${step.current ? "current" : ""} ${step.status} ${isLast ? "last" : ""}`}
+      className={`research-flow-step motion-stagger-item ${step.complete ? "complete" : ""} ${step.current ? "current flow-step-animate" : ""} ${step.status} ${isLast ? "last" : ""}`}
       style={motionIndexStyle(index)}
     >
       <div className="flow-marker">{marker}</div>

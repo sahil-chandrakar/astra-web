@@ -23,6 +23,15 @@
   --duration-fast: 140ms;
   --duration-medium: 220ms;
   --duration-slow: 360ms;
+
+  /* Animation-specific tokens */
+  --duration-instant: 80ms;
+  --duration-micro: 120ms;
+  --duration-dramatic: 600ms;
+  --stagger-base: 50ms;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.27, 1.55);
+  --ease-decel: cubic-bezier(0, 0, 0.2, 1);
 }
 
 @theme inline {
@@ -34,6 +43,22 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* GPU layer promotion for animated elements */
+.gpu-layer {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* Layout containment for scroll containers */
+.contain-scroll {
+  contain: layout style paint;
+}
+
+/* Remove will-change after entrance animation completes */
+.animation-done {
+  will-change: auto;
 }
 
 html,
@@ -3756,7 +3781,7 @@ select:focus-visible {
 }
 
 .command-chat-box:focus-within {
-  border-color: rgba(87, 242, 146, 0.5);
+  border-color: transparent;
   background:
     linear-gradient(135deg, rgba(91, 223, 242, 0.06), rgba(87, 242, 146, 0.045)),
     rgba(255, 255, 255, 0.05);
@@ -3765,6 +3790,8 @@ select:focus-visible {
 
 .command-chat-box textarea {
   display: block;
+  position: relative;
+  z-index: 2;
   width: 100%;
   min-width: 0;
   min-height: 42px;
@@ -7694,11 +7721,9 @@ button:disabled,
 @keyframes modal-backdrop-fade-in {
   0% {
     opacity: 0;
-    backdrop-filter: blur(0px);
   }
   100% {
     opacity: 1;
-    backdrop-filter: blur(8px);
   }
 }
 
@@ -8032,6 +8057,706 @@ button:disabled,
   }
 }
 
+/* ================================================================
+   PHASE 1 — Micro-Interactions & Hover Polish
+   ================================================================ */
+
+/* 1.1 — Ripple effect for primary actions */
+.ripple-on-click {
+  position: relative;
+  overflow: hidden;
+}
+.ripple-on-click::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--click-x, 50%) var(--click-y, 50%),
+    rgba(87, 242, 146, 0.2), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+.ripple-on-click:active::after {
+  opacity: 1;
+  transition-duration: 0.05s;
+}
+
+/* 1.3 — Icon contextual animations */
+.icon-rotate-hover:hover svg {
+  transform: rotate(90deg);
+  transition: transform var(--duration-medium) var(--ease-spring);
+}
+
+@keyframes icon-micro-bounce {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-3px); }
+  60% { transform: translateY(1px); }
+}
+.icon-bounce-hover:hover svg {
+  animation: icon-micro-bounce 0.4s var(--ease-snap);
+}
+
+@keyframes icon-micro-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px) rotate(-2deg); }
+  40% { transform: translateX(2px) rotate(2deg); }
+  60% { transform: translateX(-1px) rotate(-1deg); }
+  80% { transform: translateX(1px) rotate(1deg); }
+}
+.icon-shake-hover:hover svg {
+  animation: icon-micro-shake 0.4s ease;
+}
+
+.icon-slide-hover:hover svg {
+  transform: translate(2px, -2px);
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+/* 1.4 — Animated tooltips */
+.tooltip-trigger {
+  position: relative;
+}
+.tooltip-trigger::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: 4px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease,
+              transform var(--duration-fast) var(--ease-out);
+  z-index: 50;
+}
+.tooltip-trigger:hover::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 1.5 — Enhanced card hover states */
+.evidence-card,
+.citation-list li {
+  transition: transform var(--duration-fast) var(--ease-spring),
+              box-shadow var(--duration-fast) ease,
+              border-color var(--duration-fast) ease;
+}
+.evidence-card:hover,
+.citation-list li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25),
+              0 0 0 1px var(--line-strong);
+}
+
+.settings-big-card,
+.settings-stat {
+  transition: border-color var(--duration-fast) ease,
+              box-shadow var(--duration-fast) ease;
+}
+.settings-big-card:hover,
+.settings-stat:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-soft), 0 0 30px rgba(87, 242, 146, 0.05);
+}
+
+.ability-row {
+  transition: transform var(--duration-fast) var(--ease-spring),
+              border-left-color var(--duration-fast) ease;
+  border-left: 2px solid transparent;
+}
+.ability-row:hover {
+  transform: translateX(3px);
+  border-left-color: var(--emerald);
+}
+
+/* ================================================================
+   PHASE 2 — Entrance & Exit Choreography
+   ================================================================ */
+
+/* 2.1 — Differentiated transcript row entrances */
+@keyframes transcript-user-enter {
+  from {
+    opacity: 0;
+    transform: translateX(20px) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes transcript-astra-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-15px) scale(0.97);
+    filter: blur(2px);
+  }
+  70% {
+    opacity: 1;
+    transform: translateX(2px) scale(1.003);
+    filter: blur(0);
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+.transcript-row.user-enter {
+  animation: transcript-user-enter 0.4s var(--ease-out) both;
+}
+.transcript-row.astra-enter {
+  animation: transcript-astra-enter 0.5s var(--ease-out) both;
+}
+
+/* 2.2 — Exit animations */
+@keyframes element-exit {
+  to {
+    opacity: 0;
+    transform: translateX(-20px) scale(0.95);
+    max-height: 0;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+}
+.exiting {
+  animation: element-exit 0.35s var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+@keyframes transcript-clear-item {
+  to {
+    opacity: 0;
+    transform: translateX(-100%) scale(0.9);
+    max-height: 0;
+  }
+}
+.transcript-clearing .transcript-row:nth-child(1) { animation: transcript-clear-item 0.3s var(--ease-out) 0ms forwards; }
+.transcript-clearing .transcript-row:nth-child(2) { animation: transcript-clear-item 0.3s var(--ease-out) 30ms forwards; }
+.transcript-clearing .transcript-row:nth-child(3) { animation: transcript-clear-item 0.3s var(--ease-out) 60ms forwards; }
+.transcript-clearing .transcript-row:nth-child(4) { animation: transcript-clear-item 0.3s var(--ease-out) 90ms forwards; }
+.transcript-clearing .transcript-row:nth-child(5) { animation: transcript-clear-item 0.3s var(--ease-out) 120ms forwards; }
+.transcript-clearing .transcript-row:nth-child(6) { animation: transcript-clear-item 0.3s var(--ease-out) 150ms forwards; }
+.transcript-clearing .transcript-row:nth-child(7) { animation: transcript-clear-item 0.3s var(--ease-out) 180ms forwards; }
+.transcript-clearing .transcript-row:nth-child(8) { animation: transcript-clear-item 0.3s var(--ease-out) 210ms forwards; }
+.transcript-clearing .transcript-row:nth-child(n+9) { animation: transcript-clear-item 0.3s var(--ease-out) 250ms forwards; }
+
+/* 2.3 — Mode transition crossfade */
+@keyframes mode-crossfade-enter {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.mode-enter {
+  animation: mode-crossfade-enter 0.4s var(--ease-out);
+}
+
+/* 2.5 — Enhanced mock test fullscreen entrance */
+@keyframes exam-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 2.6 — Enhanced stagger using token */
+.motion-stagger-fast {
+  animation: motion-item-rise var(--duration-medium) var(--ease-out) both;
+  animation-delay: calc(var(--motion-index, 0) * var(--stagger-base));
+  backface-visibility: hidden;
+}
+
+/* ================================================================
+   PHASE 3 — Loading States & Streaming Feedback
+   ================================================================ */
+
+/* 3.1 — Skeleton loading placeholders */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-1) 25%,
+    var(--surface-2) 37%,
+    var(--surface-1) 63%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+.skeleton-text { height: 12px; margin-bottom: 8px; width: 100%; }
+.skeleton-text.short { width: 55%; }
+.skeleton-text.medium { width: 75%; }
+.skeleton-avatar { width: 28px; height: 28px; border-radius: 50%; }
+.skeleton-card { height: 64px; margin-bottom: 10px; border-radius: 8px; }
+.skeleton-metric { width: 80px; height: 36px; border-radius: 8px; }
+
+/* 3.2 — Streaming text cursor */
+@keyframes stream-cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.stream-cursor::after {
+  content: '▊';
+  color: var(--emerald);
+  animation: stream-cursor-blink 0.8s step-end infinite;
+  margin-left: 1px;
+  font-weight: 100;
+}
+
+/* 3.3 — Progress bar for long operations */
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.progress-bar-indeterminate {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(87, 242, 146, 0.08);
+  z-index: 10;
+}
+.progress-bar-indeterminate::after {
+  content: '';
+  position: absolute;
+  width: 25%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--emerald), transparent);
+  animation: progress-indeterminate 1.5s var(--ease-out) infinite;
+}
+
+/* 3.4 — Research timeline step animations */
+@keyframes flow-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.flow-step-animate {
+  animation: flow-step-enter 0.5s var(--ease-out) both;
+}
+
+/* 3.5 — Automation event stream animation */
+@keyframes automation-event-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px);
+    border-left-color: var(--emerald);
+  }
+  30% {
+    border-left-color: var(--emerald);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+    border-left-color: transparent;
+  }
+}
+.automation-chat-message:last-child {
+  animation: automation-event-enter 0.4s var(--ease-out);
+}
+
+/* ================================================================
+   PHASE 4 — Voice Interface & Radar Polish
+   ================================================================ */
+
+/* 4.1 — Enhanced radar ring transitions */
+.radar-ring {
+  transition: border-color var(--duration-slow) ease,
+              opacity var(--duration-slow) ease;
+}
+
+.radar-core {
+  transition: background var(--duration-slow) ease,
+              box-shadow var(--duration-slow) ease;
+}
+
+/* 4.2 — Voice mode card entrance */
+@keyframes stat-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.voice-mode-card {
+  animation: stat-card-enter 0.5s var(--ease-out) 0.2s both;
+}
+.confidence-card {
+  animation: stat-card-enter 0.5s var(--ease-out) 0.35s both;
+}
+
+/* 4.3 — Listen toggle state animation */
+@keyframes listen-start-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(87, 242, 146, 0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(87, 242, 146, 0); }
+  100% { box-shadow: none; }
+}
+.listen-toggle.just-activated {
+  animation: listen-start-pulse 0.6s ease;
+}
+
+/* 4.5 — Voice state transition overlay */
+.voice-listening .voice-stage {
+  box-shadow: inset 0 0 80px rgba(87, 242, 146, 0.04);
+  transition: box-shadow var(--duration-slow) ease;
+}
+.voice-thinking .voice-stage {
+  box-shadow: inset 0 0 80px rgba(91, 223, 242, 0.04);
+  transition: box-shadow var(--duration-slow) ease;
+}
+.voice-speaking .voice-stage {
+  box-shadow: inset 0 0 80px rgba(255, 178, 46, 0.04);
+  transition: box-shadow var(--duration-slow) ease;
+}
+
+/* ================================================================
+   PHASE 5 — Sidebar Navigation Animations
+   ================================================================ */
+
+/* 5.1 — Nav button active indicator slide */
+@keyframes nav-indicator-grow {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.nav-button.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: linear-gradient(180deg, var(--emerald), var(--cyan));
+  border-radius: 0 3px 3px 0;
+  animation: nav-indicator-grow 0.3s var(--ease-spring);
+}
+
+/* 5.3 — Brand lockup breathing effect */
+@keyframes brand-star-breathe {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(87, 242, 146, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(87, 242, 146, 0.55));
+  }
+}
+
+.brand-star {
+  animation: brand-star-breathe 4s ease-in-out infinite;
+}
+
+/* 5.4 — Status dot enhanced pulse ring */
+.status-dot {
+  position: relative;
+}
+.status-dot.ready::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--emerald);
+  animation: status-ring-pulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes status-ring-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.8); opacity: 0; }
+}
+
+/* 5.5 — Pro account card sheen enhancement */
+.user-strip.pro-account-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-soft), 0 0 20px rgba(87, 242, 146, 0.08);
+  transition: transform var(--duration-fast) var(--ease-spring),
+              box-shadow var(--duration-fast) ease;
+}
+
+/* ================================================================
+   PHASE 6 — Transcript & Input Area
+   ================================================================ */
+
+/* 6.1 — Command input focus glow */
+.command-chat-box {
+  position: relative;
+}
+
+.command-chat-box::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--emerald), var(--cyan), var(--emerald));
+  background-size: 300% 300%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  z-index: 1;
+  pointer-events: none;
+  transition: opacity var(--duration-medium) ease;
+}
+
+.command-chat-box:focus-within::after {
+  opacity: 0.9;
+  animation: input-border-flow 3s linear infinite;
+}
+
+@keyframes input-border-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* 6.2 — Send button state animations */
+@keyframes send-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(87, 242, 146, 0.3); }
+  50% { box-shadow: 0 0 0 5px rgba(87, 242, 146, 0); }
+}
+.command-form button[type="submit"].has-content {
+  animation: send-ready-pulse 1.8s ease infinite;
+}
+
+/* 6.3 — Transcript auto-scroll indicator */
+@keyframes scroll-indicator-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
+
+.scroll-to-bottom-indicator {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--emerald);
+  cursor: pointer;
+  animation: scroll-indicator-bounce 1.5s ease infinite;
+  z-index: 10;
+}
+
+/* 6.4 — Inline confirmation card animation */
+@keyframes confirm-card-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+    box-shadow: 0 0 20px rgba(255, 178, 46, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(255, 178, 46, 0.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+.inline-confirm-card {
+  animation: confirm-card-enter 0.5s var(--ease-spring);
+}
+
+/* ================================================================
+   PHASE 7 — Settings, Automation & Agent Panels
+   ================================================================ */
+
+/* 7.1 — Settings section transition */
+@keyframes settings-section-enter {
+  from {
+    opacity: 0;
+    transform: translateX(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.settings-detail-panel {
+  animation: settings-section-enter 0.35s var(--ease-out);
+}
+
+/* 7.2 — Settings section button active indicator */
+.settings-section-button.active {
+  position: relative;
+}
+.settings-section-button.active::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 50%;
+  background: var(--emerald);
+  border-radius: 3px 0 0 3px;
+  animation: nav-indicator-grow 0.3s var(--ease-spring);
+}
+
+/* 7.3 — Settings grid card stagger */
+.settings-grid > * {
+  animation: motion-item-rise var(--duration-medium) var(--ease-out) both;
+}
+.settings-grid > *:nth-child(1) { animation-delay: 0ms; }
+.settings-grid > *:nth-child(2) { animation-delay: 60ms; }
+.settings-grid > *:nth-child(3) { animation-delay: 120ms; }
+.settings-grid > *:nth-child(4) { animation-delay: 180ms; }
+.settings-grid > *:nth-child(5) { animation-delay: 240ms; }
+.settings-grid > *:nth-child(6) { animation-delay: 300ms; }
+
+/* 7.4 — Automation workspace split animation */
+.automation-chat-panel {
+  animation: panel-fade-in 0.4s var(--ease-out) both;
+}
+.automation-inspector-panel {
+  animation: panel-slide-in-right 0.4s var(--ease-spring) 0.15s both;
+}
+
+/* 7.5 — Automation status card transitions */
+.automation-status-card {
+  transition: border-color var(--duration-medium) ease,
+              background var(--duration-medium) ease,
+              box-shadow var(--duration-medium) ease;
+}
+
+@keyframes status-change-flash {
+  0% { box-shadow: 0 0 0 0 rgba(87, 242, 146, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(87, 242, 146, 0.1); }
+  100% { box-shadow: none; }
+}
+.automation-status-card.just-changed {
+  animation: status-change-flash 0.5s ease;
+}
+
+/* 7.6 — Agent command catalog items */
+@keyframes test-result-pop {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.ability-row .test-result-badge {
+  animation: test-result-pop 0.4s var(--ease-spring);
+}
+
+/* 7.8 — Study flashcard flip animation */
+@keyframes flashcard-flip {
+  0% { transform: perspective(600px) rotateY(0deg); }
+  50% { transform: perspective(600px) rotateY(90deg); }
+  100% { transform: perspective(600px) rotateY(0deg); }
+}
+
+.study-flashcard.flipping {
+  animation: flashcard-flip 0.6s var(--ease-spring);
+}
+
+/* 7.9 — Study quiz answer feedback */
+@keyframes quiz-correct {
+  0% { background: rgba(87, 242, 146, 0.3); transform: scale(1.02); }
+  100% { background: rgba(87, 242, 146, 0.08); transform: scale(1); }
+}
+
+@keyframes quiz-wrong {
+  0%, 100% { transform: translateX(0); background: rgba(255, 107, 107, 0.15); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+.study-quiz-option.correct { animation: quiz-correct 0.5s ease; }
+.study-quiz-option.wrong { animation: quiz-wrong 0.5s ease; }
+
+/* ================================================================
+   PHASE 8 — Scroll-Triggered & Ambient Animations
+   ================================================================ */
+
+/* 8.1 — Scroll-triggered reveals */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(15px);
+  transition: opacity 0.5s var(--ease-out), transform 0.5s var(--ease-out);
+}
+.scroll-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 8.2 — Ambient grid background animation */
+@keyframes grid-ambient-pulse {
+  0%, 100% { opacity: 0.022; }
+  50% { opacity: 0.04; }
+}
+
+/* 8.3 — Ambient gradient blobs */
+@keyframes ambient-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -20px) scale(1.1); }
+  66% { transform: translate(-20px, 30px) scale(0.95); }
+}
+@keyframes ambient-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-30px, 25px) scale(0.9); }
+  66% { transform: translate(25px, -15px) scale(1.05); }
+}
+
+/* 7.2 — Sidebar stagger entrance on load */
+.nav-rail .brand-lockup {
+  animation: motion-item-rise var(--duration-medium) var(--ease-out) 0ms both;
+}
+.nav-rail .nav-list .nav-button:nth-child(1) { animation: motion-item-rise var(--duration-medium) var(--ease-out) 50ms both; }
+.nav-rail .nav-list .nav-button:nth-child(2) { animation: motion-item-rise var(--duration-medium) var(--ease-out) 100ms both; }
+.nav-rail .nav-list .nav-button:nth-child(3) { animation: motion-item-rise var(--duration-medium) var(--ease-out) 150ms both; }
+.nav-rail .nav-list .nav-button:nth-child(4) { animation: motion-item-rise var(--duration-medium) var(--ease-out) 200ms both; }
+.nav-rail .nav-list .nav-button:nth-child(5) { animation: motion-item-rise var(--duration-medium) var(--ease-out) 250ms both; }
+.nav-rail .handsfree-widget { animation: motion-item-rise var(--duration-medium) var(--ease-out) 320ms both; }
+.nav-rail .user-strip { animation: motion-item-rise var(--duration-medium) var(--ease-out) 440ms both; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -8051,7 +8776,11 @@ button:disabled,
   .motion-stagger-item,
   .nav-button:hover,
   .settings-section-button:hover,
-  .mock-exam-options button:hover {
+  .mock-exam-options button:hover,
+  .skeleton,
+  .stream-cursor::after,
+  .progress-bar-indeterminate::after {
     transform: none !important;
+    animation: none !important;
   }
 }

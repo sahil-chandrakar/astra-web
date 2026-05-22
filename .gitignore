@@ -45,3 +45,6 @@ next-env.d.ts
 
 # local validation artifacts
 /astra-*.png
+/e2e-*.png
+/e2e-*.json
+/whatsapp-*.png
