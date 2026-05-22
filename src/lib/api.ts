@@ -392,6 +392,12 @@ export type VoiceStatusResponse = {
   message: string;
 };
 
+export type VoiceTranscriptionResponse = {
+  transcript: string;
+  message: string;
+  setup_required: string[];
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8001";
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -776,6 +782,18 @@ export async function warmVoice(voice?: string) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ voice }),
+    }),
+  );
+}
+
+export async function transcribeSpeech(audio: Blob) {
+  const formData = new FormData();
+  const extension = audio.type.includes("wav") ? "wav" : audio.type.includes("ogg") ? "ogg" : "webm";
+  formData.append("audio", audio, `voice.${extension}`);
+  return parseResponse<VoiceTranscriptionResponse>(
+    await fetch(`${API_BASE_URL}/api/voice/transcribe`, {
+      method: "POST",
+      body: formData,
     }),
   );
 }

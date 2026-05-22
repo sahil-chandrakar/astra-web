@@ -116,6 +116,7 @@ import {
   submitMockTest,
   synthesizeSpeech,
   testAgentCommands,
+  transcribeSpeech,
   updateLlmSettings,
   updateMemory,
   uploadDocument,
@@ -529,6 +530,11 @@ export default function Home() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const recognitionActiveRef = useRef(false);
   const recognitionRestartTimerRef = useRef<number | null>(null);
+  const localRecorderRef = useRef<MediaRecorder | null>(null);
+  const localRecorderTimerRef = useRef<number | null>(null);
+  const localVoiceActiveRef = useRef(false);
+  const localTranscribingRef = useRef(false);
+  const resumeLocalListeningRef = useRef<(() => void) | null>(null);
   const handsFreeRef = useRef(false);
   const speakingRef = useRef(false);
   const voiceOutputMutedRef = useRef(false);
@@ -884,6 +890,18 @@ export default function Home() {
   const stopRecognition = useCallback(() => {
     clearRecognitionRestart();
     recognitionActiveRef.current = false;
+    localVoiceActiveRef.current = false;
+    if (localRecorderTimerRef.current !== null) {
+      window.clearTimeout(localRecorderTimerRef.current);
+      localRecorderTimerRef.current = null;
+    }
+    try {
+      const recorder = localRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    } catch {
+      // MediaRecorder may already be inactive while its stop event is settling.
+    }
+    localRecorderRef.current = null;
     try {
       recognitionRef.current?.stop();
     } catch {
@@ -1675,6 +1693,7 @@ export default function Home() {
           window.setTimeout(() => {
             if (!handsFreeRef.current || commandBusyRef.current || speakingRef.current) return;
             if (recognition) startRecognitionSafely(recognition);
+            else resumeLocalListeningRef.current?.();
           }, 120);
         }
       };
@@ -1789,11 +1808,105 @@ export default function Home() {
           window.setTimeout(() => {
             if (!handsFreeRef.current || commandBusyRef.current || speakingRef.current) return;
             if (recognition) startRecognitionSafely(recognition);
+            else resumeLocalListeningRef.current?.();
           }, 120);
         }
       }
     },
     [absorbCommandResponse, activePanel, astraPro, startRecognitionSafely, stopRecognition],
+  );
+
+  const startLocalTranscriptionLoop = useCallback(
+    (stream: MediaStream) => {
+      if (!window.MediaRecorder) {
+        setHandsFree(false);
+        handsFreeRef.current = false;
+        setListenStartedAt(null);
+        setVoiceState("unsupported");
+        setLiveTranscript("This browser cannot record audio for local voice input.");
+        return;
+      }
+
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+      localVoiceActiveRef.current = true;
+      resumeLocalListeningRef.current = () => {
+        const activeStream = micStreamRef.current;
+        if (activeStream) startLocalTranscriptionLoop(activeStream);
+      };
+
+      const recordNext = () => {
+        if (!handsFreeRef.current || commandBusyRef.current || speakingRef.current || localTranscribingRef.current) return;
+        if (localRecorderRef.current && localRecorderRef.current.state !== "inactive") return;
+
+        const chunks: BlobPart[] = [];
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        localRecorderRef.current = recorder;
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) chunks.push(event.data);
+        };
+        recorder.onerror = () => {
+          localRecorderRef.current = null;
+          if (!handsFreeRef.current) return;
+          setVoiceState("error");
+          setLiveTranscript("Local microphone recording failed. Start listening again.");
+        };
+        recorder.onstop = () => {
+          if (localRecorderTimerRef.current !== null) {
+            window.clearTimeout(localRecorderTimerRef.current);
+            localRecorderTimerRef.current = null;
+          }
+          localRecorderRef.current = null;
+          if (!localVoiceActiveRef.current || !handsFreeRef.current || commandBusyRef.current || speakingRef.current) return;
+          const audio = new Blob(chunks, { type: mimeType || "audio/webm" });
+          if (audio.size < 800) {
+            window.setTimeout(recordNext, 180);
+            return;
+          }
+          localTranscribingRef.current = true;
+          setLiveTranscript("Transcribing locally...");
+          void transcribeSpeech(audio)
+            .then((response) => {
+              const transcript = response.transcript.trim();
+              if (!localVoiceActiveRef.current || !handsFreeRef.current || commandBusyRef.current || speakingRef.current) return;
+              if (transcript) {
+                setLiveTranscript(transcript);
+                if (activePanel === "research") {
+                  void submitResearchJob(transcript, "voice", "deep");
+                } else {
+                  void submitCommand(transcript, "voice");
+                }
+                return;
+              }
+              setVoiceState("listening");
+              setLiveTranscript(response.message || "Listening locally...");
+            })
+            .catch((error) => {
+              setHandsFree(false);
+              handsFreeRef.current = false;
+              setListenStartedAt(null);
+              setVoiceState("error");
+              setLiveTranscript(error instanceof Error ? error.message : "Local voice transcription failed.");
+              stopMicrophoneStream();
+            })
+            .finally(() => {
+              localTranscribingRef.current = false;
+              if (localVoiceActiveRef.current && handsFreeRef.current && !commandBusyRef.current && !speakingRef.current) {
+                window.setTimeout(recordNext, 220);
+              }
+            });
+        };
+
+        setVoiceState("listening");
+        setLiveTranscript("Listening locally...");
+        recorder.start();
+        localRecorderTimerRef.current = window.setTimeout(() => {
+          if (recorder.state === "recording") recorder.stop();
+        }, 4200);
+      };
+
+      recordNext();
+    },
+    [activePanel, stopMicrophoneStream, submitCommand, submitResearchJob],
   );
 
   const refreshAutomationRecipes = useCallback(async () => {
@@ -1914,16 +2027,6 @@ export default function Home() {
       return;
     }
 
-    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Recognition) {
-      setHandsFree(false);
-      handsFreeRef.current = false;
-      setListenStartedAt(null);
-      setVoiceState("unsupported");
-      setLiveTranscript("This browser does not expose speech recognition. Use Chrome or Edge for voice input.");
-      return;
-    }
-
     setVoiceState("listening");
     setLiveTranscript("Checking microphone access...");
     const stream = await requestMicrophoneStream();
@@ -1935,6 +2038,13 @@ export default function Home() {
       setVoiceState("error");
       setLiveTranscript("Microphone access is blocked. Allow the mic for this site, then start listening again.");
       stopMicrophoneStream();
+      return;
+    }
+
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setLiveTranscript("Browser speech recognition is unavailable. Using local voice input...");
+      startLocalTranscriptionLoop(stream);
       return;
     }
 
@@ -2001,11 +2111,23 @@ export default function Home() {
         return;
       }
 
+      if (event.error === "network") {
+        setLiveTranscript("Browser speech service is unreachable. Switching to local voice input...");
+        recognitionRef.current = null;
+        recognitionActiveRef.current = false;
+        try {
+          recognition.stop();
+        } catch {
+          // The browser may already have stopped recognition after the network error.
+        }
+        startLocalTranscriptionLoop(stream);
+        return;
+      }
+
       const fatalError =
         event.error === "not-allowed" ||
         event.error === "service-not-allowed" ||
         event.error === "audio-capture" ||
-        event.error === "network" ||
         event.error === "language-not-supported";
       setVoiceState("error");
       setLiveTranscript(getSpeechRecognitionErrorMessage(event.error));
@@ -2018,6 +2140,7 @@ export default function Home() {
     };
     recognition.onend = () => {
       recognitionActiveRef.current = false;
+      if (recognitionRef.current !== recognition) return;
       if (handsFreeRef.current && !commandBusyRef.current && !speakingRef.current) {
         scheduleRecognitionRestart(recognition);
       }
@@ -2025,7 +2148,17 @@ export default function Home() {
 
     recognitionRef.current = recognition;
     startRecognitionSafely(recognition);
-  }, [activePanel, clearRecognitionRestart, requestMicrophoneStream, scheduleRecognitionRestart, startRecognitionSafely, stopMicrophoneStream, submitCommand, submitResearchJob]);
+  }, [
+    activePanel,
+    clearRecognitionRestart,
+    requestMicrophoneStream,
+    scheduleRecognitionRestart,
+    startLocalTranscriptionLoop,
+    startRecognitionSafely,
+    stopMicrophoneStream,
+    submitCommand,
+    submitResearchJob,
+  ]);
 
   const toggleHandsFree = useCallback(() => {
     const next = !handsFree;
@@ -5663,7 +5796,7 @@ function VoiceWaveformCanvas({
   }, [speechAnalyser]);
 
   useEffect(() => {
-    if (!stream) {
+    if (!stream || stream.getAudioTracks().length === 0) {
       analyserRef.current = null;
       return;
     }
