@@ -7,6 +7,8 @@ export type AgentCommandRisk = "safe_auto" | "safe_confirm" | "blocked";
 export type AgentCommandOutcome = "success" | "failure" | "blocked" | "confirmation_required" | "planned";
 export type AgentCommandTestStatus = "untested" | "passed" | "failed";
 export type AutomationRunStatus = "queued" | "planning" | "running" | "waiting_for_login" | "waiting_for_user" | "confirmation_required" | "complete" | "error" | "cancelled";
+export type AutomationEngine = "astra" | "openrpa";
+export type AutomationWorkflowRefType = "id" | "filename";
 export type AgentMemoryCategory = "course" | "project" | "goal" | "preference" | "general";
 export type StudyArtifactType = "notes" | "flashcards" | "quiz" | "revision_plan" | "viva_questions";
 export type LlmProviderId = "cerebras" | "nvidia";
@@ -96,6 +98,7 @@ export type AutomationRun = {
   status: AutomationRunStatus;
   current_url: string;
   events: AutomationEvent[];
+  agent_state: Record<string, unknown>;
   result: string;
   error: string;
   recipe_id: string | null;
@@ -110,13 +113,63 @@ export type AutomationConfirmOptions = {
   attestation?: string;
 };
 
+export type AutomationContinueOptions = {
+  note?: string;
+  selected_artifact_id?: string;
+};
+
 export type AutomationRecipe = {
   id: string;
   name: string;
   prompt: string;
+  engine: AutomationEngine;
   steps: Array<Record<string, unknown>>;
+  inputs: string[];
+  risk: "safe_auto" | "safe_confirm" | "blocked";
+  status: "draft" | "executable" | "needs_tools";
+  missing_tools: string[];
+  validation_errors: string[];
+  built_from: string;
+  workflow_ref: string;
+  workflow_ref_type: AutomationWorkflowRefType;
+  aliases: string[];
+  timeout_seconds: number;
+  description: string;
   created_at: string;
   updated_at: string;
+};
+
+export type AutomationRecipeCreatePayload = {
+  name: string;
+  prompt: string;
+  engine?: AutomationEngine;
+  steps?: Array<Record<string, unknown>>;
+  inputs?: string[];
+  risk?: AgentCommandRisk;
+  status?: "draft" | "executable" | "needs_tools";
+  missing_tools?: string[];
+  validation_errors?: string[];
+  built_from?: string;
+  workflow_ref?: string;
+  workflow_ref_type?: AutomationWorkflowRefType;
+  aliases?: string[];
+  timeout_seconds?: number;
+  description?: string;
+};
+
+export type AutomationEngineStatus = {
+  id: AutomationEngine;
+  label: string;
+  installed: boolean;
+  configured_path: string;
+  message: string;
+};
+
+export type AutomationSuggestion = {
+  recipe: AutomationRecipe;
+  message: string;
+  inputs: string[];
+  risk: AgentCommandRisk;
 };
 
 export type AgentMemoryItem = {
@@ -313,7 +366,7 @@ export type ActionResult = {
 
 export type CommandResponse = {
   mode: AppMode;
-  intent: "chat" | "research" | "desktop_action" | "mode_switch" | "agent_plan" | "agent_command";
+  intent: "chat" | "research" | "desktop_action" | "mode_switch" | "agent_plan" | "agent_command" | "automation_suggestion";
   spoken_text: string;
   display_text: string;
   events: AgentEvent[];
@@ -325,6 +378,8 @@ export type CommandResponse = {
   action_result: ActionResult | null;
   suggested_mode: AppMode | null;
   agent_command: AgentCommandResponse | null;
+  automation_run: AutomationRun | null;
+  automation_suggestion: AutomationSuggestion | null;
 };
 
 export type VoiceStatusResponse = {
@@ -416,12 +471,12 @@ export async function getAgentAudit() {
   return parseResponse<AgentAuditEntry[]>(await fetch(`${API_BASE_URL}/api/agent/audit`, { cache: "no-store" }));
 }
 
-export async function startAutomationRun(prompt: string, recipeId?: string | null, createRecipe = false) {
+export async function startAutomationRun(prompt: string, recipeId?: string | null, createRecipe = false, inputs: Record<string, unknown> = {}) {
   return parseResponse<AutomationRun>(
     await fetch(`${API_BASE_URL}/api/automations/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, recipe_id: recipeId ?? null, create_recipe: createRecipe }),
+      body: JSON.stringify({ prompt, recipe_id: recipeId ?? null, create_recipe: createRecipe, inputs }),
     }),
   );
 }
@@ -434,12 +489,13 @@ export function automationRunEventsUrl(runId: string) {
   return `${API_BASE_URL}/api/automations/runs/${runId}/events`;
 }
 
-export async function continueAutomationRun(runId: string, note = "") {
+export async function continueAutomationRun(runId: string, options: string | AutomationContinueOptions = "") {
+  const payload = typeof options === "string" ? { note: options } : { note: options.note ?? "", selected_artifact_id: options.selected_artifact_id ?? null };
   return parseResponse<AutomationRun>(
     await fetch(`${API_BASE_URL}/api/automations/runs/${runId}/continue`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify(payload),
     }),
   );
 }
@@ -478,12 +534,16 @@ export async function listAutomationRecipes() {
   return parseResponse<AutomationRecipe[]>(await fetch(`${API_BASE_URL}/api/automations/recipes`, { cache: "no-store" }));
 }
 
-export async function createAutomationRecipe(name: string, prompt: string, steps: Array<Record<string, unknown>> = []) {
+export async function getAutomationEngineStatus() {
+  return parseResponse<AutomationEngineStatus[]>(await fetch(`${API_BASE_URL}/api/automations/engines/status`, { cache: "no-store" }));
+}
+
+export async function createAutomationRecipe(payload: AutomationRecipeCreatePayload) {
   return parseResponse<AutomationRecipe>(
     await fetch(`${API_BASE_URL}/api/automations/recipes`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, prompt, steps }),
+      body: JSON.stringify(payload),
     }),
   );
 }

@@ -61,8 +61,10 @@ import {
   AgentMemoryCategory,
   AgentMemoryItem,
   AppMode,
+  AutomationEngineStatus,
   AutomationEvent,
   AutomationRecipe,
+  AutomationRecipeCreatePayload,
   AutomationRun,
   automationRunEventsUrl,
   askDocument,
@@ -70,6 +72,7 @@ import {
   CommandResponse,
   confirmAutomationRun,
   continueAutomationRun,
+  createAutomationRecipe,
   DocumentQuestionResponse,
   DocumentRecord,
   executeAgentCommand,
@@ -77,6 +80,7 @@ import {
   getAgentAbilities,
   getAgentAudit,
   getAgents,
+  getAutomationEngineStatus,
   getAutomationRun,
   getHealth,
   getLlmSettings,
@@ -149,7 +153,20 @@ type TranscriptAction =
       type: "open_agent_tool";
       label: string;
       panel: AgentToolPanel;
+    }
+  | {
+      type: "run_automation_recipe";
+      label: string;
+      recipeId: string;
+      prompt: string;
+      inputKeys: string[];
     };
+type TranscriptUiAction = {
+  label: string;
+  busy?: boolean;
+  inputKeys?: string[];
+  onClick: (inputs?: Record<string, string>) => void;
+};
 
 type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "unsupported" | "error";
 type TranscriptTone = "emerald" | "cyan" | "amber";
@@ -308,36 +325,15 @@ const cerebrasProModels = [
 ];
 
 const nvidiaFastModels = [
-  "openai/gpt-oss-20b",
-  "deepseek-ai/deepseek-v4-flash",
-  "nvidia/nvidia-nemotron-nano-9b-v2",
-  "nvidia/nemotron-3-nano-30b-a3b",
-  "microsoft/phi-4-mini-flash-reasoning",
-  "microsoft/phi-4-mini-instruct",
-  "meta/llama-3.1-8b-instruct",
-  "meta/llama-3.2-3b-instruct",
-  "mistralai/mistral-7b-instruct-v0.3",
-  "qwen/qwen2.5-coder-32b-instruct",
-  "stepfun-ai/step-3-5-flash",
+  "google/gemma-3n-e2b-it",
+  "google/gemma-3n-e4b-it",
+  "microsoft/phi-4-multimodal-instruct",
+  "abacusai/dracarys-llama-3.1-70b-instruct",
 ];
 
 const nvidiaProModels = [
-  "moonshotai/kimi-k2.6",
-  "z-ai/glm5.1",
-  "z-ai/glm4.7",
-  "deepseek-ai/deepseek-v4-pro",
-  "openai/gpt-oss-120b",
   "qwen/qwen3-coder-480b-a35b-instruct",
-  "qwen/qwen3-next-80b-a3b-thinking",
-  "qwen/qwen3-5-122b-a10b",
-  "nvidia/nemotron-3-super-120b-a12b",
-  "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-  "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-  "minimaxai/minimax-m2.7",
-  "moonshotai/kimi-k2-thinking",
-  "moonshotai/kimi-k2-instruct",
-  "mistralai/mistral-nemotron",
-  "mistralai/mixtral-8x22b-instruct",
+  "meta/llama-4-maverick-17b-128e-instruct",
 ];
 
 function modelOptionsForProfile(
@@ -483,6 +479,7 @@ export default function Home() {
   const [automationRun, setAutomationRun] = useState<AutomationRun | null>(null);
   const [automationEvents, setAutomationEvents] = useState<AutomationEvent[]>([]);
   const [automationRecipes, setAutomationRecipes] = useState<AutomationRecipe[]>([]);
+  const [automationEngineStatuses, setAutomationEngineStatuses] = useState<AutomationEngineStatus[]>([]);
   const [automationBusy, setAutomationBusy] = useState(false);
   const [automationCancelBusy, setAutomationCancelBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -686,9 +683,10 @@ export default function Home() {
       listDocuments().catch(() => []),
       listStudyArtifacts().catch(() => []),
       listAutomationRecipes().catch(() => []),
+      getAutomationEngineStatus().catch(() => []),
       getVoiceStatus().catch(() => null),
     ])
-      .then(([healthResponse, llmSettingsResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, voiceStatusResponse]) => {
+      .then(([healthResponse, llmSettingsResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, automationEngineResponse, voiceStatusResponse]) => {
         if (cancelled) return;
         setHealth(healthResponse);
         setLlmSettings(llmSettingsResponse);
@@ -701,6 +699,7 @@ export default function Home() {
         setDocuments(documentResponse);
         setStudyArtifacts(studyResponse);
         setAutomationRecipes(automationRecipeResponse);
+        setAutomationEngineStatuses(automationEngineResponse);
         setSelectedDocumentId((current) => current || documentResponse[0]?.id || "");
       })
       .catch(() => {
@@ -736,11 +735,12 @@ export default function Home() {
     setSettingsBusy(true);
     setSettingsNotice(null);
     try {
-      const [healthResponse, voiceResponse, reportResponse, automationRecipeResponse] = await Promise.all([
+      const [healthResponse, voiceResponse, reportResponse, automationRecipeResponse, automationEngineResponse] = await Promise.all([
         getHealth(),
         getVoiceStatus().catch(() => null),
         getReports().catch(() => []),
         listAutomationRecipes().catch(() => []),
+        getAutomationEngineStatus().catch(() => []),
         refreshAgentData(),
       ]);
       const llmSettingsResponse = await getLlmSettings().catch(() => null);
@@ -749,6 +749,7 @@ export default function Home() {
       setVoiceStatus(voiceResponse);
       setReports(reportResponse);
       setAutomationRecipes(automationRecipeResponse);
+      setAutomationEngineStatuses(automationEngineResponse);
       setSettingsNotice({ tone: "success", message: "Settings status refreshed." });
     } catch (error) {
       setSettingsNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not refresh settings." });
@@ -1517,6 +1518,51 @@ export default function Home() {
 
   const absorbCommandResponse = useCallback(
     async (response: CommandResponse) => {
+      if (response.automation_run) {
+        const run = response.automation_run;
+        setAutomationRun(run);
+        setAutomationEvents(run.events);
+        setAutomationBusy(!["complete", "error", "cancelled", "waiting_for_login", "waiting_for_user", "confirmation_required"].includes(run.status));
+        setActivePanel("sources");
+        setMessages((current) => [
+          ...current,
+          {
+            role: "astra",
+            label: "Automation Agent",
+            content: response.display_text || response.spoken_text,
+            time: formatClock(),
+            mode: "sources",
+          },
+        ]);
+        setEvents(response.events ?? []);
+        await speak(response.spoken_text || response.display_text);
+        return;
+      }
+      if (response.automation_suggestion) {
+        const suggestion = response.automation_suggestion;
+        setMessages((current) => [
+          ...current,
+          {
+            role: "agent",
+            label: "Automation Suggestion",
+            content: response.display_text || suggestion.message,
+            time: formatClock(),
+            mode: "agents",
+            actions: [
+              {
+                type: "run_automation_recipe",
+                label: "Run Workflow",
+                recipeId: suggestion.recipe.id,
+                prompt: suggestion.recipe.prompt || suggestion.recipe.name,
+                inputKeys: suggestion.inputs,
+              },
+            ],
+          },
+        ]);
+        setEvents(response.events ?? []);
+        await speak(response.spoken_text || response.display_text);
+        return;
+      }
       if (response.agent_command) {
         await handleAgentCommandResult(response.agent_command);
         return;
@@ -1746,18 +1792,19 @@ export default function Home() {
   );
 
   const refreshAutomationRecipes = useCallback(async () => {
-    const recipes = await listAutomationRecipes();
+    const [recipes, engines] = await Promise.all([listAutomationRecipes(), getAutomationEngineStatus().catch(() => [])]);
     setAutomationRecipes(recipes);
+    setAutomationEngineStatuses(engines);
   }, []);
 
   const runAutomationPrompt = useCallback(
-    async (prompt: string, createRecipe = false, recipeId?: string | null) => {
+    async (prompt: string, createRecipe = false, recipeId?: string | null, inputs: Record<string, unknown> = {}) => {
       const cleanPrompt = prompt.trim();
       if (!cleanPrompt) return;
       setAutomationBusy(true);
       setActivePanel("sources");
       try {
-        const run = await startAutomationRun(cleanPrompt, recipeId, createRecipe);
+        const run = await startAutomationRun(cleanPrompt, recipeId, createRecipe, inputs);
         setAutomationRun(run);
         setAutomationEvents(run.events);
       } catch (error) {
@@ -1776,10 +1823,18 @@ export default function Home() {
     [],
   );
 
-  const continueActiveAutomation = useCallback(async () => {
+  const registerOpenRpaRecipe = useCallback(async (payload: AutomationRecipeCreatePayload) => {
+    const recipe = await createAutomationRecipe(payload);
+    const [recipes, engines] = await Promise.all([listAutomationRecipes(), getAutomationEngineStatus().catch(() => [])]);
+    setAutomationRecipes(recipes);
+    setAutomationEngineStatuses(engines);
+    return recipe;
+  }, []);
+
+  const continueActiveAutomation = useCallback(async (note = "", selectedArtifactId = "") => {
     if (!automationRun) return;
     setAutomationBusy(true);
-    const run = await continueAutomationRun(automationRun.id, "User is ready to continue.");
+    const run = await continueAutomationRun(automationRun.id, { note: note || "User is ready to continue.", selected_artifact_id: selectedArtifactId || undefined });
     setAutomationRun(run);
     setAutomationEvents(run.events);
   }, [automationRun]);
@@ -2008,13 +2063,14 @@ export default function Home() {
           </div>
 
           <nav className="nav-list" aria-label="Astra sections">
-            {navItems.map((item) => (
+            {navItems.map((item, index) => (
               <NavButton
                 key={item.id}
                 icon={item.icon}
                 label={item.label}
                 active={activePanel === item.id}
                 onClick={() => setActivePanel(item.id)}
+                index={index}
               />
             ))}
           </nav>
@@ -2077,12 +2133,14 @@ export default function Home() {
                 run={automationRun}
                 events={automationEvents}
                 recipes={automationRecipes}
+                engineStatuses={automationEngineStatuses}
                 onDraftChange={setCommandDraft}
                 onRun={(prompt, createRecipe, recipeId) => {
                   setCommandDraft("");
                   void runAutomationPrompt(prompt, createRecipe, recipeId);
                 }}
-                onContinue={() => void continueActiveAutomation()}
+                onRegisterOpenRpa={(payload) => registerOpenRpaRecipe(payload)}
+                onContinue={(note, selectedArtifactId) => void continueActiveAutomation(note, selectedArtifactId)}
                 onConfirm={(approved, options) => void confirmActiveAutomation(approved, options)}
                 onCancelDownload={() => void cancelActiveAutomation()}
                 cancelBusy={automationCancelBusy}
@@ -2119,7 +2177,7 @@ export default function Home() {
                 voiceStatus={voiceStatus}
               />
             ) : (
-              <div className={`voice-stage ${activePanel === "agents" ? "agent-voice-stage" : ""}`}>
+              <div key={activePanel} className={`voice-stage ${activePanel === "agents" ? "agent-voice-stage" : ""} panel-entry`}>
                 <VoiceWaveformCanvas mode={visibleVoiceState} stream={micStream} speechCue={speechCue} speechAnalyser={speechAnalyser} />
 
                 <div className="voice-mode-card">
@@ -2178,13 +2236,20 @@ export default function Home() {
 
                 <div className="action-row">
                   {activePanel === "agents"
-                    ? agentToolButtons.map((action) => (
-                        <button key={action.panel} type="button" onClick={() => setAgentToolPanel(action.panel)} className="tool-button" disabled={commandInFlight}>
+                    ? agentToolButtons.map((action, index) => (
+                        <button
+                          key={action.panel}
+                          type="button"
+                          onClick={() => setAgentToolPanel(action.panel)}
+                          className="tool-button motion-stagger-item"
+                          style={{ ["--motion-index" as string]: index }}
+                          disabled={commandInFlight}
+                        >
                           <action.icon className="h-4 w-4" />
                           {action.label}
                         </button>
                       ))
-                    : quickActions.map((action) => (
+                    : quickActions.map((action, index) => (
                         <button
                           key={action.label}
                           type="button"
@@ -2196,7 +2261,8 @@ export default function Home() {
                               void submitCommand(action.prompt, "quick_action", action.mode, action.depth);
                             }
                           }}
-                          className="tool-button"
+                          className="tool-button motion-stagger-item"
+                          style={{ ["--motion-index" as string]: index }}
                           disabled={commandInFlight}
                         >
                           <action.icon className="h-4 w-4" />
@@ -2210,7 +2276,7 @@ export default function Home() {
           </section>
 
           {activePanel !== "sources" && activePanel !== "settings" && (
-          <aside className="transcript-panel transcript-rail hud-panel">
+          <aside className="transcript-panel transcript-rail hud-panel panel-entry">
             <div className="transcript-head">
               <div>
                 <span className="surface-title">Transcript</span>
@@ -2231,7 +2297,7 @@ export default function Home() {
                 {messages.length === 0 && (
                   <TranscriptRow icon={Sparkles} speaker="Astra" text={currentMode.empty} tone="cyan" active={false} time="Ready" />
                 )}
-                {messages.slice(-14).map((message, index) => {
+                {messages.slice(-14).map((message, index, visibleMessages) => {
                   const speaker = message.label ?? (message.role === "user" ? "You" : "Astra");
                   const tone: TranscriptTone = message.role === "user" ? "emerald" : message.role === "agent" ? "amber" : "cyan";
                   const shouldOpenFull = message.role !== "user" && isLongTranscriptText(message.content);
@@ -2240,14 +2306,18 @@ export default function Home() {
                     label: action.label,
                     busy:
                       (action.type === "start_mock_test" && agentBusyId === `start_mock_test:${action.mockTestId}`) ||
-                      (action.type === "run_agent_command" && agentBusyId === action.commandId),
-                    onClick: () => {
+                      (action.type === "run_agent_command" && agentBusyId === action.commandId) ||
+                      (action.type === "run_automation_recipe" && automationBusy && automationRun?.recipe_id === action.recipeId),
+                    inputKeys: action.type === "run_automation_recipe" ? action.inputKeys : undefined,
+                    onClick: (inputs?: Record<string, string>) => {
                       if (action.type === "start_mock_test") {
                         void startMockTestFromTranscript(action.mockTestId);
                       } else if (action.type === "run_agent_command") {
                         void runAgentRegistryCommand(action.commandId, action.params, action.inputText, false, action.resolution ?? {});
                       } else if (action.type === "open_agent_tool") {
                         setAgentToolPanel(action.panel);
+                      } else if (action.type === "run_automation_recipe") {
+                        void runAutomationPrompt(action.prompt, false, action.recipeId, inputs ?? {});
                       }
                     },
                   }));
@@ -2267,6 +2337,7 @@ export default function Home() {
                       onConfirm={confirmAgentCommand}
                       onCancelConfirm={cancelAgentConfirmation}
                       actions={transcriptActions}
+                      motionIndex={Math.max(0, visibleMessages.length - 1 - index)}
                       onViewFull={
                         shouldOpenFull
                           ? () =>
@@ -2373,7 +2444,7 @@ export default function Home() {
           )}
 
           {activePanel !== "sources" && activePanel !== "settings" && (
-          <div className="timeline-panel timeline-strip timeline-fullwidth">
+          <div className="timeline-panel timeline-strip timeline-fullwidth panel-entry">
             <div className="timeline-head">
               <div>
                 <span className="surface-title">{activePanel === "agents" ? "Agent Timeline" : "Research Timeline"}</span>
@@ -2409,7 +2480,7 @@ export default function Home() {
 
             <div className="research-flow-track">
               {researchFlowItems.map((step, index) => (
-                <ResearchFlowStep key={`${step.label}-${index}`} step={step} isLast={index === researchFlowItems.length - 1} />
+                <ResearchFlowStep key={`${step.label}-${index}`} step={step} isLast={index === researchFlowItems.length - 1} index={index} />
               ))}
             </div>
           </div>
@@ -2656,7 +2727,7 @@ function SettingsWorkspace({
   const ActiveSettingsIcon = activeSettings.icon;
 
   return (
-    <section className="settings-workspace settings-workspace-control" aria-label="Astra settings control center">
+    <section className="settings-workspace settings-workspace-control panel-entry" aria-label="Astra settings control center">
       <header className="settings-topbar">
         <div className="settings-title-block">
           <h2>Astra control center</h2>
@@ -2676,16 +2747,16 @@ function SettingsWorkspace({
       </header>
 
       <section className="settings-status-strip" aria-label="Settings summary">
-        <SettingsSummaryItem icon={Server} label="Backend" value={health?.status ?? "offline"} ok={health?.status === "ok"} />
-        <SettingsSummaryItem icon={Brain} label="Model" value={health?.model ?? "not loaded"} ok={Boolean(health?.model)} />
-        <SettingsSummaryItem icon={Volume2} label="Voice" value={voiceReady ? "ready" : "setup"} ok={voiceReady} />
-        <SettingsSummaryItem icon={ShieldCheck} label="Safety" value={failedAbilities ? `${failedAbilities} issue` : "guarded"} ok={failedAbilities === 0} />
+        <SettingsSummaryItem icon={Server} label="Backend" value={health?.status ?? "offline"} ok={health?.status === "ok"} index={0} />
+        <SettingsSummaryItem icon={Brain} label="Model" value={health?.model ?? "not loaded"} ok={Boolean(health?.model)} index={1} />
+        <SettingsSummaryItem icon={Volume2} label="Voice" value={voiceReady ? "ready" : "setup"} ok={voiceReady} index={2} />
+        <SettingsSummaryItem icon={ShieldCheck} label="Safety" value={failedAbilities ? `${failedAbilities} issue` : "guarded"} ok={failedAbilities === 0} index={3} />
       </section>
 
       <section className="settings-control-layout">
         <aside className="settings-section-rail" aria-label="Settings sections">
-          {settingsSections.map((section) => (
-            <SettingsSectionButton key={section.id} section={section} active={activeSection === section.id} onClick={() => setActiveSection(section.id)} />
+          {settingsSections.map((section, index) => (
+            <SettingsSectionButton key={section.id} section={section} active={activeSection === section.id} onClick={() => setActiveSection(section.id)} index={index} />
           ))}
         </aside>
 
@@ -2702,7 +2773,7 @@ function SettingsWorkspace({
           </div>
 
           {activeSection === "general" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <div className="settings-metric-grid">
                 <SettingsMetric icon={Server} label="Backend" value={backendUrl.replace(/^https?:\/\//, "")} meta={health?.status ?? "offline"} />
                 <SettingsMetric icon={Brain} label="Active model" value={health?.model ?? "Not loaded"} meta="LLM runtime" />
@@ -2724,7 +2795,7 @@ function SettingsWorkspace({
           )}
 
           {activeSection === "voice" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <SettingsRow icon={Volume2} title="Voice package" detail={`${voiceStatus?.voice ?? PREFERRED_PIPER_VOICE} - ${voiceStatus?.cached ? "cached locally" : "not cached"}`} meta={voiceStatus?.message ?? "Voice status pending"} />
               <SettingsToggle label="Astra Pro" detail={astraProLocked ? "Always on in agent mode" : "Use the pro model for richer answers"} enabled={astraPro} disabled={astraProLocked} onClick={onToggleAstraPro} />
               <SettingsToggle label="Voice output" detail={voiceOutputMuted ? "Astra responses are muted" : "Astra can speak responses"} enabled={!voiceOutputMuted} onClick={onToggleVoiceOutput} />
@@ -2739,7 +2810,7 @@ function SettingsWorkspace({
           )}
 
           {activeSection === "automation" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <div className="settings-metric-grid">
                 <SettingsMetric icon={Wand2} label="Saved flows" value={automationRecipes.length.toString()} meta="Recipes" />
                 <SettingsMetric icon={History} label="Current run" value={automationStatus} meta={automationRun ? "Active history" : "No run"} />
@@ -2756,21 +2827,21 @@ function SettingsWorkspace({
           )}
 
           {activeSection === "data" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <div className="settings-shortcut-grid">
-                <SettingsShortcutButton icon={Database} label="Memories" value={memoryItems.length} onClick={() => onOpenAgentPanel("memory")} />
-                <SettingsShortcutButton icon={FileUp} label="Documents" value={documents.length} onClick={() => onOpenAgentPanel("documents")} />
-                <SettingsShortcutButton icon={FileText} label="Reports" value={reports.length} onClick={() => onOpenAgentPanel("catalog")} />
-                <SettingsShortcutButton icon={Brain} label="Study" value={studyArtifacts.length} onClick={() => onOpenAgentPanel("study")} />
-                <SettingsShortcutButton icon={TestTube2} label="Mock tests" value={mockTests.length} onClick={() => onOpenAgentPanel("mock_test")} />
-                <SettingsShortcutButton icon={Wand2} label="Automations" value={automationRecipes.length} onClick={onOpenAutomation} />
+                <SettingsShortcutButton icon={Database} label="Memories" value={memoryItems.length} onClick={() => onOpenAgentPanel("memory")} index={0} />
+                <SettingsShortcutButton icon={FileUp} label="Documents" value={documents.length} onClick={() => onOpenAgentPanel("documents")} index={1} />
+                <SettingsShortcutButton icon={FileText} label="Reports" value={reports.length} onClick={() => onOpenAgentPanel("catalog")} index={2} />
+                <SettingsShortcutButton icon={Brain} label="Study" value={studyArtifacts.length} onClick={() => onOpenAgentPanel("study")} index={3} />
+                <SettingsShortcutButton icon={TestTube2} label="Mock tests" value={mockTests.length} onClick={() => onOpenAgentPanel("mock_test")} index={4} />
+                <SettingsShortcutButton icon={Wand2} label="Automations" value={automationRecipes.length} onClick={onOpenAutomation} index={5} />
               </div>
               <SettingsRow icon={FolderOpen} title="Local-first data" detail="Astra keeps memory, documents, study material, mock tests, and automation recipes in the local app workspace." meta="Private" />
             </div>
           )}
 
           {activeSection === "safety" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <div className="settings-metric-grid">
                 <SettingsMetric icon={CheckCircle2} label="Passing checks" value={passedAbilities.toString()} meta={`${agentAbilities.length || 0} total`} />
                 <SettingsMetric icon={AlertTriangle} label="Attention" value={failedAbilities.toString()} meta={safetySummary} />
@@ -2787,7 +2858,7 @@ function SettingsWorkspace({
           )}
 
           {activeSection === "providers" && (
-            <div className="settings-section-body">
+            <div className="settings-section-body panel-entry" key={activeSection}>
               <SettingsRow icon={Network} title="Provider readiness" detail={`${configuredProviders}/${providerRows.length} providers are configured.`} meta={missingProviders.length ? "Needs setup" : "Ready"} />
               {llmSettings && (
                 <div className="settings-llm-grid">
@@ -2810,8 +2881,8 @@ function SettingsWorkspace({
                 </div>
               )}
               <div className="settings-provider-lines">
-                {providerRows.map((provider) => (
-                  <SettingsProviderLine key={provider.name} provider={provider} />
+                {providerRows.map((provider, index) => (
+                  <SettingsProviderLine key={provider.name} provider={provider} index={index} />
                 ))}
               </div>
               {missingProviders.length > 0 && (
@@ -2889,9 +2960,9 @@ function SettingsStatusPill({ ok, label }: { ok: boolean; label: string }) {
   return <span className={`settings-status-pill ${ok ? "ready" : "warn"}`}>{label}</span>;
 }
 
-function SettingsSummaryItem({ icon: Icon, label, value, ok }: { icon: IconType; label: string; value: string; ok: boolean }) {
+function SettingsSummaryItem({ icon: Icon, label, value, ok, index }: { icon: IconType; label: string; value: string; ok: boolean; index?: number }) {
   return (
-    <div className={`settings-summary-item ${ok ? "ready" : "warn"}`}>
+    <div className={`settings-summary-item motion-stagger-item ${ok ? "ready" : "warn"}`} style={motionIndexStyle(index)}>
       <Icon className="h-4 w-4" />
       <span>{label}</span>
       <strong title={value}>{shortAutomationText(value, 26)}</strong>
@@ -2899,10 +2970,10 @@ function SettingsSummaryItem({ icon: Icon, label, value, ok }: { icon: IconType;
   );
 }
 
-function SettingsSectionButton({ section, active, onClick }: { section: SettingsSectionConfig; active: boolean; onClick: () => void }) {
+function SettingsSectionButton({ section, active, onClick, index }: { section: SettingsSectionConfig; active: boolean; onClick: () => void; index?: number }) {
   const Icon = section.icon;
   return (
-    <button type="button" className={`settings-section-button ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}>
+    <button type="button" className={`settings-section-button motion-stagger-item ${active ? "active" : ""}`} style={motionIndexStyle(index)} onClick={onClick} aria-pressed={active}>
       <Icon className="h-5 w-5" />
       <span>
         <strong>{section.label}</strong>
@@ -2913,9 +2984,9 @@ function SettingsSectionButton({ section, active, onClick }: { section: Settings
   );
 }
 
-function SettingsToggle({ label, detail, enabled, disabled = false, onClick }: { label: string; detail: string; enabled: boolean; disabled?: boolean; onClick: () => void }) {
+function SettingsToggle({ label, detail, enabled, disabled = false, onClick, index }: { label: string; detail: string; enabled: boolean; disabled?: boolean; onClick: () => void; index?: number }) {
   return (
-    <button type="button" className={`settings-toggle ${enabled ? "enabled" : ""}`} onClick={onClick} disabled={disabled}>
+    <button type="button" className={`settings-toggle motion-stagger-item ${enabled ? "enabled" : ""}`} style={motionIndexStyle(index)} onClick={onClick} disabled={disabled}>
       <span>
         <strong>{label}</strong>
         <small>{detail}</small>
@@ -2925,9 +2996,9 @@ function SettingsToggle({ label, detail, enabled, disabled = false, onClick }: {
   );
 }
 
-function SettingsMetric({ icon: Icon, label, value, meta }: { icon: IconType; label: string; value: string; meta: string }) {
+function SettingsMetric({ icon: Icon, label, value, meta, index }: { icon: IconType; label: string; value: string; meta: string; index?: number }) {
   return (
-    <div className="settings-metric">
+    <div className="settings-metric motion-stagger-item" style={motionIndexStyle(index)}>
       <Icon className="h-5 w-5" />
       <span>{label}</span>
       <strong title={value}>{shortAutomationText(value, 38)}</strong>
@@ -2943,6 +3014,7 @@ function SettingsRow({
   meta,
   action,
   tone,
+  index,
 }: {
   icon: IconType;
   title: string;
@@ -2950,9 +3022,10 @@ function SettingsRow({
   meta?: string;
   action?: React.ReactNode;
   tone?: "warn";
+  index?: number;
 }) {
   return (
-    <div className={`settings-row ${tone ?? ""}`}>
+    <div className={`settings-row motion-stagger-item ${tone ?? ""}`} style={motionIndexStyle(index)}>
       <div className="settings-row-icon">
         <Icon className="h-5 w-5" />
       </div>
@@ -2966,9 +3039,9 @@ function SettingsRow({
   );
 }
 
-function SettingsShortcutButton({ icon: Icon, label, value, onClick }: { icon: IconType; label: string; value: number; onClick: () => void }) {
+function SettingsShortcutButton({ icon: Icon, label, value, onClick, index }: { icon: IconType; label: string; value: number; onClick: () => void; index?: number }) {
   return (
-    <button type="button" className="settings-shortcut-button" onClick={onClick}>
+    <button type="button" className="settings-shortcut-button motion-stagger-item" style={motionIndexStyle(index)} onClick={onClick}>
       <Icon className="h-5 w-5" />
       <span>{label}</span>
       <strong>{value}</strong>
@@ -2976,9 +3049,9 @@ function SettingsShortcutButton({ icon: Icon, label, value, onClick }: { icon: I
   );
 }
 
-function SettingsProviderLine({ provider }: { provider: { name: string; label: string; enabled: boolean } }) {
+function SettingsProviderLine({ provider, index }: { provider: { name: string; label: string; enabled: boolean }; index?: number }) {
   return (
-    <div className={`settings-provider-line ${provider.enabled ? "ready" : "warn"}`}>
+    <div className={`settings-provider-line motion-stagger-item ${provider.enabled ? "ready" : "warn"}`} style={motionIndexStyle(index)}>
       <span className={provider.enabled ? "status-dot ready" : "status-dot pending"} />
       <strong>{provider.label}</strong>
       <small>{provider.enabled ? "Configured" : "Missing"}</small>
@@ -2992,8 +3065,10 @@ function AutomationWorkspace({
   run,
   events,
   recipes,
+  engineStatuses,
   onDraftChange,
   onRun,
+  onRegisterOpenRpa,
   onContinue,
   onConfirm,
   onCancelDownload,
@@ -3004,9 +3079,11 @@ function AutomationWorkspace({
   run: AutomationRun | null;
   events: AutomationEvent[];
   recipes: AutomationRecipe[];
+  engineStatuses: AutomationEngineStatus[];
   onDraftChange: (value: string) => void;
   onRun: (prompt: string, createRecipe?: boolean, recipeId?: string | null) => void;
-  onContinue: () => void;
+  onRegisterOpenRpa: (payload: AutomationRecipeCreatePayload) => Promise<AutomationRecipe>;
+  onContinue: (note?: string, selectedArtifactId?: string) => void;
   onConfirm: (approved: boolean, options?: { confirmedRights?: boolean; attestation?: string }) => void;
   onCancelDownload: () => void;
   cancelBusy: boolean;
@@ -3019,6 +3096,8 @@ function AutomationWorkspace({
   const statusLabel = run?.status.replaceAll("_", " ") ?? "Ready";
   const statusTone = automationStatusTone(run?.status, busy);
   const latestEvent = events[events.length - 1] ?? null;
+  const waitingCandidates = useMemo(() => automationArtifactCandidates(run, latestEvent), [run, latestEvent]);
+  const [waitingNote, setWaitingNote] = useState("");
   const activeTool = latestEvent ? automationToolLabel(latestEvent.type) : "Idle";
   const elapsedLabel = run ? formatAutomationElapsed(run.created_at, run.updated_at, !isTerminal) : "--";
   const phaseSummary = useMemo(() => summarizeAutomationPhases(events), [events]);
@@ -3035,8 +3114,12 @@ function AutomationWorkspace({
     setRightsConfirmed(false);
   }, [run?.id, run?.confirmation?.kind, videoUrl]);
 
+  useEffect(() => {
+    setWaitingNote("");
+  }, [run?.id, run?.status, latestEvent?.id]);
+
   return (
-    <section className="automation-workspace" aria-label="Automation workspace">
+    <section className="automation-workspace panel-entry" aria-label="Automation workspace">
       <section className="automation-chat-panel">
         <div className="automation-chat-head">
           <div>
@@ -3069,20 +3152,38 @@ function AutomationWorkspace({
                   <p title={run.prompt}>{shortAutomationText(run.prompt, 180)}</p>
                 </article>
               )}
-              {visibleItems.map((item) =>
+              {visibleItems.map((item, index) =>
                 item.kind === "download" ? (
-                  <AutomationDownloadCard key={item.key} item={item} canCancel={run?.status === "running"} cancelBusy={cancelBusy} onCancel={onCancelDownload} />
+                  <AutomationDownloadCard key={item.key} item={item} canCancel={run?.status === "running"} cancelBusy={cancelBusy} onCancel={onCancelDownload} index={index} />
                 ) : (
-                  <AutomationEventCard key={item.event.id} event={item.event} />
+                  <AutomationEventCard key={item.event.id} event={item.event} index={index} />
                 ),
               )}
             </>
           )}
           {isWaiting && (
             <article className="automation-action-card">
-              <span>{run?.status === "waiting_for_user" ? "Waiting for desktop step" : "Waiting for you"}</span>
-              <p>{run?.status === "waiting_for_user" ? "Finish the Windows step, then continue." : "Finish the login or manual step in the Automation Browser, then continue."}</p>
-              <button type="button" onClick={onContinue}>
+              <span>{run?.status === "waiting_for_user" ? "Waiting for input" : "Waiting for login"}</span>
+              <p>{latestEvent?.message || (run?.status === "waiting_for_user" ? "Astra needs one more detail before continuing." : "Finish the login or manual browser step, then continue.")}</p>
+              {run?.status === "waiting_for_user" && waitingCandidates.length > 0 && (
+                <div className="automation-candidate-list">
+                  {waitingCandidates.map((candidate) => (
+                    <button key={candidate.id} type="button" onClick={() => onContinue(`Use ${candidate.filename}`, candidate.id)}>
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      {shortAutomationText(candidate.filename, 48)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {run?.status === "waiting_for_user" && (
+                <input
+                  className="automation-wait-input"
+                  value={waitingNote}
+                  onChange={(event) => setWaitingNote(event.target.value)}
+                  placeholder="Clarify which file or action to use..."
+                />
+              )}
+              <button type="button" onClick={() => onContinue(waitingNote)}>
                 <Play className="h-4 w-4" />
                 Continue
               </button>
@@ -3153,8 +3254,10 @@ function AutomationWorkspace({
         latestEvent={latestEvent}
         onDraftChange={onDraftChange}
         onRun={onRun}
+        onRegisterOpenRpa={onRegisterOpenRpa}
         phaseSummary={phaseSummary}
         recipes={recipes}
+        engineStatuses={engineStatuses}
         statusLabel={statusLabel}
         statusTone={statusTone}
         trimmedDraft={trimmedDraft}
@@ -3180,8 +3283,10 @@ function AutomationInspector({
   latestEvent,
   onDraftChange,
   onRun,
+  onRegisterOpenRpa,
   phaseSummary,
   recipes,
+  engineStatuses,
   statusLabel,
   statusTone,
   trimmedDraft,
@@ -3193,12 +3298,70 @@ function AutomationInspector({
   latestEvent: AutomationEvent | null;
   onDraftChange: (value: string) => void;
   onRun: (prompt: string, createRecipe?: boolean, recipeId?: string | null) => void;
+  onRegisterOpenRpa: (payload: AutomationRecipeCreatePayload) => Promise<AutomationRecipe>;
   phaseSummary: AutomationPhaseSummary;
   recipes: AutomationRecipe[];
+  engineStatuses: AutomationEngineStatus[];
   statusLabel: string;
   statusTone: string;
   trimmedDraft: string;
 }) {
+  const openRpaStatus = engineStatuses.find((engine) => engine.id === "openrpa") ?? null;
+  const [openRpaForm, setOpenRpaForm] = useState({
+    name: "",
+    workflowRef: "",
+    workflowRefType: "id" as "id" | "filename",
+    aliases: "",
+    inputs: "",
+    risk: "safe_confirm" as "safe_auto" | "safe_confirm",
+    timeoutSeconds: "300",
+    description: "",
+  });
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [registerNotice, setRegisterNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const updateOpenRpaForm = (key: keyof typeof openRpaForm, value: string) => {
+    setOpenRpaForm((current) => ({ ...current, [key]: value }) as typeof current);
+  };
+  const registerOpenRpa = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = openRpaForm.name.trim();
+    const workflowRef = openRpaForm.workflowRef.trim();
+    if (!name || !workflowRef) {
+      setRegisterNotice({ tone: "error", message: "Name and workflow reference are required." });
+      return;
+    }
+    setRegisterBusy(true);
+    setRegisterNotice(null);
+    try {
+      await onRegisterOpenRpa({
+        name,
+        prompt: openRpaForm.description.trim() || name,
+        engine: "openrpa",
+        workflow_ref: workflowRef,
+        workflow_ref_type: openRpaForm.workflowRefType,
+        aliases: splitAutomationCsv(openRpaForm.aliases),
+        inputs: splitAutomationCsv(openRpaForm.inputs),
+        risk: openRpaForm.risk,
+        timeout_seconds: Number(openRpaForm.timeoutSeconds) || 300,
+        description: openRpaForm.description.trim(),
+      });
+      setRegisterNotice({ tone: "success", message: "OpenRPA workflow registered." });
+      setOpenRpaForm({
+        name: "",
+        workflowRef: "",
+        workflowRefType: "id",
+        aliases: "",
+        inputs: "",
+        risk: "safe_confirm",
+        timeoutSeconds: "300",
+        description: "",
+      });
+    } catch (error) {
+      setRegisterNotice({ tone: "error", message: error instanceof Error ? error.message : "Could not register workflow." });
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
   return (
     <aside className="automation-inspector-panel" aria-label="Automation run inspector">
       <section className="automation-inspector-hero">
@@ -3232,11 +3395,69 @@ function AutomationInspector({
           <small>Live trace</small>
         </div>
         <div className="automation-phase-grid">
-          <AutomationPhaseCard icon={Activity} label="Plan" count={phaseSummary.plan} />
-          <AutomationPhaseCard icon={Globe2} label="Browser" count={phaseSummary.browser} />
-          <AutomationPhaseCard icon={Terminal} label="Desktop" count={phaseSummary.desktop} />
-          <AutomationPhaseCard icon={Download} label="Download" count={phaseSummary.download} />
+          <AutomationPhaseCard icon={Activity} label="Plan" count={phaseSummary.plan} index={0} />
+          <AutomationPhaseCard icon={Globe2} label="Browser" count={phaseSummary.browser} index={1} />
+          <AutomationPhaseCard icon={Terminal} label="Desktop" count={phaseSummary.desktop} index={2} />
+          <AutomationPhaseCard icon={Download} label="Download" count={phaseSummary.download} index={3} />
         </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>OpenRPA Engine</span>
+          <small>{openRpaStatus?.installed ? "Installed" : "Missing"}</small>
+        </div>
+        <div className={`automation-engine-card ${openRpaStatus?.installed ? "ready" : "missing"}`}>
+          <div className="automation-engine-icon">
+            {openRpaStatus?.installed ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+          </div>
+          <div>
+            <strong>{openRpaStatus?.label ?? "OpenRPA"}</strong>
+            <span title={openRpaStatus?.configured_path || openRpaStatus?.message}>
+              {openRpaStatus?.configured_path || openRpaStatus?.message || "Status unavailable"}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section className="automation-inspector-section">
+        <div className="automation-recipe-head">
+          <span>Register OpenRPA</span>
+          <small>Catalog</small>
+        </div>
+        <form className="openrpa-register-form" onSubmit={registerOpenRpa}>
+          <input value={openRpaForm.name} onChange={(event) => updateOpenRpaForm("name", event.target.value)} placeholder="Workflow name" disabled={registerBusy} />
+          <div className="openrpa-ref-row">
+            <select value={openRpaForm.workflowRefType} onChange={(event) => updateOpenRpaForm("workflowRefType", event.target.value)} disabled={registerBusy}>
+              <option value="id">Workflow ID</option>
+              <option value="filename">XAML filename</option>
+            </select>
+            <input value={openRpaForm.workflowRef} onChange={(event) => updateOpenRpaForm("workflowRef", event.target.value)} placeholder="ID or relative .xaml" disabled={registerBusy} />
+          </div>
+          <input value={openRpaForm.aliases} onChange={(event) => updateOpenRpaForm("aliases", event.target.value)} placeholder="Aliases, comma separated" disabled={registerBusy} />
+          <input value={openRpaForm.inputs} onChange={(event) => updateOpenRpaForm("inputs", event.target.value)} placeholder="Inputs, comma separated" disabled={registerBusy} />
+          <div className="openrpa-ref-row compact">
+            <select value={openRpaForm.risk} onChange={(event) => updateOpenRpaForm("risk", event.target.value)} disabled={registerBusy}>
+              <option value="safe_confirm">Confirm</option>
+              <option value="safe_auto">Auto</option>
+            </select>
+            <input
+              type="number"
+              min={1}
+              max={86400}
+              value={openRpaForm.timeoutSeconds}
+              onChange={(event) => updateOpenRpaForm("timeoutSeconds", event.target.value)}
+              placeholder="Timeout"
+              disabled={registerBusy}
+            />
+          </div>
+          <textarea value={openRpaForm.description} onChange={(event) => updateOpenRpaForm("description", event.target.value)} placeholder="Description" disabled={registerBusy} rows={2} />
+          {registerNotice && <p className={`openrpa-register-notice ${registerNotice.tone}`}>{registerNotice.message}</p>}
+          <button type="submit" disabled={registerBusy || !openRpaForm.name.trim() || !openRpaForm.workflowRef.trim()}>
+            {registerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Register
+          </button>
+        </form>
       </section>
 
       <section className="automation-inspector-section">
@@ -3245,10 +3466,10 @@ function AutomationInspector({
           <small>Prefill</small>
         </div>
         <div className="automation-quick-grid">
-          {AUTOMATION_QUICK_STARTS.map((item) => {
+          {AUTOMATION_QUICK_STARTS.map((item, index) => {
             const Icon = item.icon;
             return (
-              <button key={item.label} type="button" onClick={() => onDraftChange(item.prompt)} disabled={busy} title={item.prompt}>
+              <button key={item.label} type="button" onClick={() => onDraftChange(item.prompt)} disabled={busy} title={item.prompt} className="motion-stagger-item" style={motionIndexStyle(index)}>
                 <Icon className="h-4 w-4" />
                 <span>{item.label}</span>
               </button>
@@ -3290,10 +3511,24 @@ function AutomationInspector({
         </div>
         {recipes.length > 0 ? (
           <div className="automation-recipe-list">
-            {recipes.slice(0, 5).map((recipe) => (
-              <button key={recipe.id} type="button" onClick={() => onRun(recipe.prompt, false, recipe.id)} disabled={busy}>
-                <strong>{recipe.name}</strong>
-                <small>{shortAutomationText(recipe.prompt, 86)}</small>
+            {recipes.slice(0, 5).map((recipe, index) => (
+              <button
+                key={recipe.id}
+                type="button"
+                onClick={() => onRun(recipe.prompt, false, recipe.id)}
+                disabled={busy || recipe.status !== "executable"}
+                className={`motion-stagger-item automation-recipe-${recipe.status ?? "executable"}`}
+                style={motionIndexStyle(index)}
+                title={recipe.status === "needs_tools" ? `Needs tools: ${recipe.missing_tools.join(", ")}` : recipe.description || recipe.prompt || recipe.workflow_ref}
+              >
+                <span className="automation-recipe-title">
+                  <strong>{recipe.name}</strong>
+                  <em className={`automation-engine-badge ${recipe.engine === "openrpa" ? "openrpa" : "astra"}`}>{recipe.engine === "openrpa" ? "OpenRPA" : "Astra"}</em>
+                </span>
+                <small>
+                  {recipe.status && recipe.status !== "executable" ? `${recipe.status.replace("_", " ")}: ` : ""}
+                  {shortAutomationText(recipe.description || recipe.prompt || recipe.workflow_ref, 86)}
+                </small>
               </button>
             ))}
           </div>
@@ -3305,9 +3540,9 @@ function AutomationInspector({
   );
 }
 
-function AutomationPhaseCard({ icon: Icon, label, count }: { icon: React.ComponentType<{ className?: string }>; label: string; count: number }) {
+function AutomationPhaseCard({ icon: Icon, label, count, index }: { icon: React.ComponentType<{ className?: string }>; label: string; count: number; index?: number }) {
   return (
-    <div className={count > 0 ? "automation-phase-card active" : "automation-phase-card"}>
+    <div className={count > 0 ? "automation-phase-card motion-stagger-item active" : "automation-phase-card motion-stagger-item"} style={motionIndexStyle(index)}>
       <Icon className="h-4 w-4" />
       <span>{label}</span>
       <strong>{count}</strong>
@@ -3370,14 +3605,14 @@ function automationDownloadKey(event: AutomationEvent) {
   return folderPath || sourceUrl || "download";
 }
 
-function AutomationEventCard({ event }: { event: AutomationEvent }) {
+function AutomationEventCard({ event, index }: { event: AutomationEvent; index?: number }) {
   const Icon = automationEventIcon(event.type);
   const messageLimit = event.type.includes("error") ? 220 : 150;
   const message = shortAutomationText(event.message, messageLimit);
   const eventTime = formatAutomationEventTime(event.timestamp);
 
   return (
-    <article className={`automation-chat-message astra automation-timeline-row ${event.type} ${automationEventTone(event.type)}`}>
+    <article className={`automation-chat-message astra automation-timeline-row motion-stagger-item ${event.type} ${automationEventTone(event.type)}`} style={motionIndexStyle(index)}>
       <div className="automation-event-icon" aria-hidden="true">
         <Icon className="h-3.5 w-3.5" />
       </div>
@@ -3399,11 +3634,13 @@ function AutomationDownloadCard({
   canCancel,
   cancelBusy,
   onCancel,
+  index,
 }: {
   item: Extract<AutomationTimelineItem, { kind: "download" }>;
   canCancel: boolean;
   cancelBusy: boolean;
   onCancel: () => void;
+  index?: number;
 }) {
   const latestEvent = item.events[item.events.length - 1];
   const startEvent = item.events.find((event) => event.type === "download_start");
@@ -3414,7 +3651,7 @@ function AutomationDownloadCard({
   const message = shortAutomationText(latestEvent.type === "download_progress" ? startEvent?.message || latestEvent.message : latestEvent.message, 96);
 
   return (
-    <article className={`automation-chat-message astra automation-download-card ${latestEvent.type}`}>
+    <article className={`automation-chat-message astra automation-download-card motion-stagger-item ${latestEvent.type}`} style={motionIndexStyle(index)}>
       <span>{title}</span>
       <p title={latestEvent.type === "download_progress" ? startEvent?.message || latestEvent.message : latestEvent.message}>{message}</p>
       <AutomationDownloadProgress event={{ ...progressEvent, data: { ...mergedEvent.data, ...progressEvent.data } }} running={isRunning} />
@@ -3486,12 +3723,31 @@ function shortAutomationText(text: string, maxLength: number) {
   return `${compact.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
 }
 
+function automationArtifactCandidates(run: AutomationRun | null, latestEvent: AutomationEvent | null): Array<{ id: string; filename: string; title?: string }> {
+  const sources = [latestEvent?.data?.candidates, latestEvent?.data?.matches, run?.agent_state?.candidates];
+  for (const source of sources) {
+    if (!Array.isArray(source)) continue;
+    const candidates: Array<{ id: string; filename: string; title?: string }> = [];
+    source.forEach((item) => {
+        if (!item || typeof item !== "object") return;
+        const record = item as Record<string, unknown>;
+        const id = typeof record.id === "string" ? record.id : "";
+        const filename = typeof record.filename === "string" ? record.filename : typeof record.title === "string" ? record.title : "";
+        const title = typeof record.title === "string" ? record.title : undefined;
+        if (id && filename) candidates.push({ id, filename, title });
+      });
+    if (candidates.length > 0) return candidates;
+  }
+  return [];
+}
+
 function summarizeAutomationPhases(events: AutomationEvent[]): AutomationPhaseSummary {
   return events.reduce<AutomationPhaseSummary>(
     (summary, event) => {
       if (event.type === "queued" || event.type === "planning" || event.type === "plan_ready" || event.type === "step") summary.plan += 1;
       if (event.type === "browser" || event.type.includes("search")) summary.browser += 1;
-      if (event.type.startsWith("windows") || event.type === "calculator" || event.type === "file_explorer" || event.type === "alarm_set") summary.desktop += 1;
+      if (event.type.startsWith("openrpa")) summary.desktop += 1;
+      if (event.type.startsWith("windows") || event.type === "calculator" || event.type === "file_explorer" || event.type === "alarm_set" || event.type === "whatsapp_prepared") summary.desktop += 1;
       if (DOWNLOAD_LIFECYCLE_EVENTS.has(event.type)) summary.download += 1;
       return summary;
     },
@@ -3510,10 +3766,12 @@ function automationStatusTone(status: AutomationRun["status"] | undefined, busy:
 
 function automationEventIcon(type: string) {
   if (type.includes("error") || type === "blocked") return AlertTriangle;
-  if (type === "complete" || type === "alarm_set" || type === "download_complete") return CheckCircle2;
+  if (type === "complete" || type === "verified" || type === "alarm_set" || type === "download_complete" || type === "artifact_recorded" || type === "artifact_resolved" || type === "app_opened" || type === "folder_opened") return CheckCircle2;
   if (type.includes("confirmation") || type.includes("waiting")) return ShieldCheck;
+  if (type.startsWith("openrpa")) return Terminal;
   if (type === "browser" || type.includes("search")) return Globe2;
-  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set") return Terminal;
+  if (type.startsWith("artifact") || type === "app_resolved") return FolderOpen;
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set" || type === "whatsapp_prepared") return Terminal;
   if (type === "queued" || type === "planning" || type === "plan_ready" || type === "step") return Activity;
   return Circle;
 }
@@ -3521,9 +3779,11 @@ function automationEventIcon(type: string) {
 function automationEventTone(type: string) {
   if (type.includes("error") || type === "blocked") return "danger";
   if (type.includes("confirmation") || type.includes("waiting")) return "attention";
-  if (type === "complete" || type === "alarm_set") return "success";
+  if (type === "complete" || type === "verified" || type === "alarm_set" || type === "artifact_recorded" || type === "artifact_resolved" || type === "app_opened" || type === "folder_opened") return "success";
+  if (type.startsWith("openrpa")) return type.includes("complete") ? "success" : "desktop";
   if (type === "browser") return "browser";
-  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer") return "desktop";
+  if (type.startsWith("artifact") || type.startsWith("app_")) return "desktop";
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "whatsapp_prepared") return "desktop";
   return "neutral";
 }
 
@@ -3531,9 +3791,23 @@ function formatAutomationEventLabel(type: string) {
   const labels: Record<string, string> = {
     alarm_set: "alarm set",
     file_explorer: "file explorer",
+    app_opened: "app opened",
+    app_resolved: "app resolved",
+    artifact_list: "artifact list",
+    artifact_recorded: "artifact recorded",
+    artifact_resolved: "artifact resolved",
+    folder_opened: "opened folder",
+    openrpa_complete: "OpenRPA complete",
+    openrpa_input_required: "OpenRPA input",
+    openrpa_queued: "OpenRPA queued",
+    openrpa_start: "OpenRPA start",
+    openrpa_stderr: "OpenRPA stderr",
+    openrpa_stdout: "OpenRPA stdout",
     plan_ready: "plan ready",
+    verified: "verified",
+    whatsapp_prepared: "WhatsApp prepared",
     waiting_for_login: "waiting for login",
-    waiting_for_user: "waiting for user",
+    waiting_for_user: "waiting for input",
   };
   return labels[type] ?? type.replaceAll("_", " ");
 }
@@ -3546,8 +3820,11 @@ function formatAutomationEventTime(timestamp: string) {
 
 function automationToolLabel(type: string) {
   if (DOWNLOAD_LIFECYCLE_EVENTS.has(type)) return "Downloader";
+  if (type.startsWith("openrpa")) return "OpenRPA";
+  if (type.startsWith("artifact")) return "Artifact memory";
+  if (type.startsWith("app_") || type === "folder_opened") return "App launcher";
   if (type === "browser" || type.includes("search")) return "Browser";
-  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set") return "Windows";
+  if (type.startsWith("windows") || type === "calculator" || type === "file_explorer" || type === "alarm_set" || type === "whatsapp_prepared") return "Windows";
   if (type.includes("confirmation") || type.includes("waiting")) return "Safety gate";
   if (type === "queued" || type === "planning" || type === "plan_ready" || type === "step") return "Planner";
   if (type === "complete") return "Result";
@@ -3738,6 +4015,13 @@ function buildResearchJobTranscriptNote(job: ResearchJobResponse) {
   const percent = Math.round((job.confidence ?? 0) * 100);
   const setup = job.setup_required.length > 0 ? `Setup needed: ${job.setup_required.join(", ")}.` : "Detailed Markdown report is ready.";
   return [`Research complete: ${title}.`, `${sourceCount} sources collected with ${percent}% confidence.`, setup].join("\n");
+}
+
+function splitAutomationCsv(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function buildAgentTranscriptActions(response: AgentCommandResponse, returnedMockTest?: MockTest | null): TranscriptAction[] {
@@ -3931,7 +4215,7 @@ function AgentCommandCenter({
               </div>
             </div>
 
-            <div className="agent-tools-body">
+            <div key={activePanel} className="agent-tools-body panel-entry">
             {notice && <div className={`agent-notice ${notice.tone}`}>{notice.message}</div>}
 
             {activePanel === "catalog" && (
@@ -4761,7 +5045,7 @@ function MockTestPanel({
   };
 
   return (
-    <section className="agent-panel mock-test-panel">
+    <section className="agent-panel mock-test-panel panel-entry">
       <div className="agent-panel-head">
         <div>
           <span className="surface-subtitle">Mock Test</span>
@@ -4782,7 +5066,7 @@ function MockTestPanel({
       </div>
 
       {showCreate && (
-        <form className="mock-create-form" onSubmit={(event) => void handleCreate(event)}>
+        <form className="mock-create-form panel-entry" onSubmit={(event) => void handleCreate(event)}>
           <div className="mock-create-primary">
             <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Topic, chapter, or exam area" />
             <button type="submit" className="mock-primary-action" disabled={!canCreate}>
@@ -4830,7 +5114,7 @@ function MockTestPanel({
 
       {test ? (
         <>
-          <div className="mock-test-shell">
+          <div className="mock-test-shell panel-entry" key={`${test.id}-${result ? "result" : isActive ? "active" : "preview"}`}>
             <div className="mock-test-hero">
               <div>
                 <span className="surface-title">{result ? "Results" : isActive ? "Active Test" : "Preview"}</span>
@@ -4863,7 +5147,7 @@ function MockTestPanel({
               <div className="mock-test-preview">
                 <div className="mock-test-list compact">
                   {test.questions.slice(0, 5).map((item, index) => (
-                    <button key={item.id} type="button" onClick={() => onQuestionIndex(index)}>
+                    <button key={item.id} type="button" onClick={() => onQuestionIndex(index)} className="motion-stagger-item" style={motionIndexStyle(index)}>
                       <span>Q{index + 1}</span>
                       <strong>{item.prompt}</strong>
                       <small>{item.difficulty}</small>
@@ -4919,13 +5203,13 @@ function MockTestPanel({
           </div>
 
           {tests.length > 0 && (
-            <div className="mock-test-history">
+            <div className="mock-test-history panel-entry">
               <div className="mock-test-history-head">
                 <span className="surface-title">Old Mock Tests</span>
                 <small>Open any saved mock and start it from here.</small>
               </div>
-              {tests.slice(0, 6).map((item) => (
-                <div key={item.id} className={`mock-test-history-row ${item.id === test.id ? "active" : ""}`}>
+              {tests.slice(0, 6).map((item, index) => (
+                <div key={item.id} className={`mock-test-history-row motion-stagger-item ${item.id === test.id ? "active" : ""}`} style={motionIndexStyle(index)}>
                   <button type="button" className="mock-test-history-main" onClick={() => onSelectTest(item)}>
                     <span>{item.question_count}Q</span>
                     <div>
@@ -5053,7 +5337,8 @@ function MockTestFullscreen({
               <button
                 key={item.id}
                 type="button"
-                className={`${index === activeQuestionIndex ? "active" : ""} ${answers[item.id] !== undefined ? "answered" : ""} ${reviewMarks[item.id] ? "review" : ""}`}
+                className={`motion-stagger-item ${index === activeQuestionIndex ? "active" : ""} ${answers[item.id] !== undefined ? "answered" : ""} ${reviewMarks[item.id] ? "review" : ""}`}
+                style={motionIndexStyle(index)}
                 onClick={() => onQuestionIndex(index)}
               >
                 {index + 1}
@@ -5063,7 +5348,7 @@ function MockTestFullscreen({
         </aside>
 
         {result ? (
-          <section className="mock-exam-results">
+          <section className="mock-exam-results panel-entry">
             <div className="mock-exam-result-hero">
               <Trophy className="h-6 w-6" />
               <span>Score</span>
@@ -5076,7 +5361,7 @@ function MockTestFullscreen({
             </div>
             <div className="mock-exam-review">
               {result.review.map((item, index) => (
-                <article key={item.id} className={`mock-exam-review-card ${item.is_correct ? "correct" : "wrong"}`}>
+                <article key={item.id} className={`mock-exam-review-card motion-stagger-item ${item.is_correct ? "correct" : "wrong"}`} style={motionIndexStyle(index)}>
                   <div>
                     <span>Q{index + 1}</span>
                     <strong>{item.prompt}</strong>
@@ -5091,7 +5376,7 @@ function MockTestFullscreen({
           </section>
         ) : (
           <section className="mock-exam-question-area">
-            <div className="mock-exam-question-card">
+            <div key={question.id} className="mock-exam-question-card panel-entry">
               <div className="mock-exam-question-head">
                 <span>Question {activeQuestionIndex + 1} of {test.questions.length}</span>
                 <b>{question.difficulty}</b>
@@ -5102,7 +5387,8 @@ function MockTestFullscreen({
                   <button
                     key={`${question.id}-${optionIndex}`}
                     type="button"
-                    className={answers[question.id] === optionIndex ? "selected" : ""}
+                    className={`motion-stagger-item ${answers[question.id] === optionIndex ? "selected" : ""}`}
+                    style={motionIndexStyle(optionIndex)}
                     onClick={() => onAnswer(question.id, optionIndex)}
                   >
                     <span>{String.fromCharCode(65 + optionIndex)}</span>
@@ -5324,10 +5610,10 @@ function getSpeechFrame(cue: SpeechCue | null, now: number) {
   };
 }
 
-function NavButton({ icon, label, active, onClick }: { icon: IconType; label: string; active: boolean; onClick: () => void }) {
+function NavButton({ icon, label, active, onClick, index }: { icon: IconType; label: string; active: boolean; onClick: () => void; index?: number }) {
   const Icon = icon;
   return (
-    <button type="button" onClick={onClick} className={`nav-button ${active ? "active" : ""}`}>
+    <button type="button" onClick={onClick} className={`nav-button motion-stagger-item ${active ? "active" : ""}`} style={motionIndexStyle(index)}>
       <Icon className="h-4 w-4" />
       <span>{label}</span>
     </button>
@@ -5534,6 +5820,7 @@ function TranscriptRow({
   onConfirm,
   onCancelConfirm,
   actions,
+  motionIndex,
   onViewFull,
 }: {
   icon: IconType;
@@ -5548,13 +5835,14 @@ function TranscriptRow({
   onConfirmationParamChange?: (key: string, value: unknown) => void;
   onConfirm?: () => Promise<void>;
   onCancelConfirm?: () => void;
-  actions?: Array<{ label: string; busy?: boolean; onClick: () => void }>;
+  actions?: TranscriptUiAction[];
+  motionIndex?: number;
   onViewFull?: () => void;
 }) {
   const Icon = icon;
   const lines = text.split("\n").filter(Boolean);
   return (
-    <div className={`transcript-row ${tone} ${active ? "active" : ""}`}>
+    <div className={`transcript-row motion-stagger-item ${tone} ${active ? "active" : ""}`} style={motionIndexStyle(motionIndex)}>
       <div className="row-icon">
         <Icon className="h-4 w-4" />
       </div>
@@ -5581,10 +5869,7 @@ function TranscriptRow({
         {actions && actions.length > 0 && (
           <div className="transcript-actions">
             {actions.map((action) => (
-              <button key={action.label} type="button" className="transcript-action" onClick={action.onClick} disabled={action.busy}>
-                {action.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                {action.label}
-              </button>
+              <TranscriptActionControl key={action.label} action={action} />
             ))}
           </div>
         )}
@@ -5599,6 +5884,39 @@ function TranscriptRow({
         )}
       </div>
       <MiniWave active={active} tone={tone === "amber" ? "talking" : "listening"} />
+    </div>
+  );
+}
+
+function TranscriptActionControl({ action }: { action: TranscriptUiAction }) {
+  const inputKeys = action.inputKeys ?? [];
+  const [values, setValues] = useState<Record<string, string>>({});
+  if (inputKeys.length === 0) {
+    return (
+      <button type="button" className="transcript-action" onClick={() => action.onClick()} disabled={action.busy}>
+        {action.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+        {action.label}
+      </button>
+    );
+  }
+  const missing = inputKeys.some((key) => !values[key]?.trim());
+  return (
+    <div className="transcript-action-form">
+      <div className="transcript-action-inputs">
+        {inputKeys.map((key) => (
+          <input
+            key={key}
+            value={values[key] ?? ""}
+            onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+            placeholder={key}
+            disabled={action.busy}
+          />
+        ))}
+      </div>
+      <button type="button" className="transcript-action" onClick={() => action.onClick(values)} disabled={action.busy || missing}>
+        {action.busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+        {action.label}
+      </button>
     </div>
   );
 }
@@ -5727,6 +6045,10 @@ function renderConfirmationInput(key: string, value: unknown, onChange: (key: st
   return <input value={String(value ?? "")} onChange={(event) => onChange(key, event.target.value)} />;
 }
 
+function motionIndexStyle(index?: number) {
+  return index === undefined ? undefined : ({ ["--motion-index" as string]: index } as React.CSSProperties);
+}
+
 function formatParamLabel(key: string) {
   return key.replaceAll("_", " ");
 }
@@ -5763,7 +6085,7 @@ function TranscriptDialog({ content, onClose }: { content: TranscriptDialogConte
   );
 }
 
-function ResearchFlowStep({ step, isLast }: { step: ResearchFlowItem; isLast: boolean }) {
+function ResearchFlowStep({ step, isLast, index }: { step: ResearchFlowItem; isLast: boolean; index?: number }) {
   const marker =
     step.status === "working" ? (
       <Loader2 className="h-4 w-4 animate-spin" />
@@ -5777,7 +6099,10 @@ function ResearchFlowStep({ step, isLast }: { step: ResearchFlowItem; isLast: bo
   const timeLabel = step.timestamp ? formatEventTime(step.timestamp) : step.complete ? "Done" : step.current ? "Now" : "Pending";
 
   return (
-    <div className={`research-flow-step ${step.complete ? "complete" : ""} ${step.current ? "current" : ""} ${step.status} ${isLast ? "last" : ""}`}>
+    <div
+      className={`research-flow-step motion-stagger-item ${step.complete ? "complete" : ""} ${step.current ? "current" : ""} ${step.status} ${isLast ? "last" : ""}`}
+      style={motionIndexStyle(index)}
+    >
       <div className="flow-marker">{marker}</div>
       {!isLast && <div className="flow-connector" />}
       <div className="flow-copy">
