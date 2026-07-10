@@ -226,8 +226,38 @@ type ConfirmationState = {
   label: string;
   message: string;
   params: Record<string, unknown>;
+  data: Record<string, unknown>;
   inputText: string;
   resolution: Record<string, unknown>;
+};
+
+type FormFillField = {
+  key: string;
+  label: string;
+  control_type?: string;
+  type?: string;
+  required?: boolean;
+  options?: Array<{ label?: string; value?: string }>;
+  sensitive?: boolean;
+  blocked_reason?: string;
+  value?: unknown;
+};
+
+type FormFillPreview = {
+  url?: string;
+  title?: string;
+  fields?: FormFillField[];
+  field_values?: Record<string, unknown>;
+  missing_required?: Array<{ key?: string; label?: string; reason?: string }>;
+  blocked_fields?: Array<{ key?: string; label?: string; reason?: string }>;
+  warnings?: string[];
+  detected_count?: number;
+  mapped_count?: number;
+  flow_type?: string;
+  flow_label?: string;
+  manual_required?: boolean;
+  waiting_for?: string[];
+  navigation?: Array<{ action?: string; label?: string; url?: string; score?: number }>;
 };
 
 type AgentNotice = {
@@ -328,15 +358,23 @@ const cerebrasProModels = [
 ];
 
 const nvidiaFastModels = [
-  "google/gemma-3n-e2b-it",
-  "google/gemma-3n-e4b-it",
+  "nvidia/llama-3.1-nemotron-nano-8b-v1",
+  "mistralai/ministral-14b-instruct-2512",
   "microsoft/phi-4-multimodal-instruct",
-  "abacusai/dracarys-llama-3.1-70b-instruct",
+  "mistralai/mixtral-8x7b-instruct-v0.1",
+  "mistralai/mistral-small-4-119b-2603",
 ];
 
 const nvidiaProModels = [
-  "qwen/qwen3-coder-480b-a35b-instruct",
+  "mistralai/mistral-large-3-675b-instruct-2512",
   "meta/llama-4-maverick-17b-128e-instruct",
+  "moonshotai/kimi-k2.6",
+  "deepseek-ai/deepseek-v4-flash",
+  "qwen/qwen3-next-80b-a3b-instruct",
+  "nvidia/llama-3.3-nemotron-super-49b-v1",
+  "mistralai/mistral-medium-3.5-128b",
+  "mistralai/mistral-nemotron",
+  "abacusai/dracarys-llama-3.1-70b-instruct",
 ];
 
 function modelOptionsForProfile(
@@ -506,6 +544,7 @@ export default function Home() {
     },
   ]);
   const [transcriptDialog, setTranscriptDialog] = useState<TranscriptDialogContent | null>(null);
+  const [firstNewMessageIndex, setFirstNewMessageIndex] = useState<number | null>(null);
   const [researchTopic] = useState("latest advancements in multi-agent LLM systems for academic research");
   const [, setActiveResearchJob] = useState<ResearchJobResponse | null>(null);
   const [, setSources] = useState<Source[]>([]);
@@ -574,8 +613,26 @@ export default function Home() {
     const list = transcriptListRef.current;
     if (!list) return;
     const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    transcriptAutoScrollRef.current = distanceFromBottom < 96;
+    const atBottom = distanceFromBottom < 96;
+    transcriptAutoScrollRef.current = atBottom;
+    if (atBottom) {
+      setFirstNewMessageIndex(null);
+    }
   }, []);
+
+  useEffect(() => {
+    if (transcriptAutoScrollRef.current) {
+      setFirstNewMessageIndex(null);
+    } else if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.role === "user") {
+        setFirstNewMessageIndex(null);
+        scrollTranscriptToBottom(true);
+      } else {
+        setFirstNewMessageIndex((prev) => (prev === null ? messages.length - 1 : prev));
+      }
+    }
+  }, [messages, scrollTranscriptToBottom]);
 
   useEffect(() => {
     setMounted(true);
@@ -590,7 +647,7 @@ export default function Home() {
   }, []);
 
   useLayoutEffect(() => {
-    scrollTranscriptToBottom(true);
+    scrollTranscriptToBottom(false);
   }, [messages, liveTranscript, commandInFlight, scrollTranscriptToBottom]);
 
   useLayoutEffect(() => {
@@ -693,11 +750,12 @@ export default function Home() {
       getMemory().catch(() => []),
       listDocuments().catch(() => []),
       listStudyArtifacts().catch(() => []),
+      listMockTests().catch(() => []),
       listAutomationRecipes().catch(() => []),
       getAutomationEngineStatus().catch(() => []),
       getVoiceStatus().catch(() => null),
     ])
-      .then(([healthResponse, llmSettingsResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, automationRecipeResponse, automationEngineResponse, voiceStatusResponse]) => {
+      .then(([healthResponse, llmSettingsResponse, agentResponse, reportResponse, abilityResponse, auditResponse, memoryResponse, documentResponse, studyResponse, mockTestResponse, automationRecipeResponse, automationEngineResponse, voiceStatusResponse]) => {
         if (cancelled) return;
         setHealth(healthResponse);
         setLlmSettings(llmSettingsResponse);
@@ -709,6 +767,8 @@ export default function Home() {
         setMemoryItems(memoryResponse);
         setDocuments(documentResponse);
         setStudyArtifacts(studyResponse);
+        setMockTests(mockTestResponse);
+        setActiveMockTest((current) => current ?? mockTestResponse[0] ?? null);
         setAutomationRecipes(automationRecipeResponse);
         setAutomationEngineStatuses(automationEngineResponse);
         setSelectedDocumentId((current) => current || documentResponse[0]?.id || "");
@@ -1210,6 +1270,7 @@ export default function Home() {
             label: response.label,
             message: response.message,
             params: response.params,
+            data: response.data,
             inputText: response.audit?.input_text || response.label,
             resolution: response.resolution,
           }
@@ -1255,7 +1316,7 @@ export default function Home() {
         }
       }
       await refreshAgentData();
-      await speak(response.message);
+      void speak(response.message);
     },
     [refreshAgentData, speak],
   );
@@ -2459,36 +2520,41 @@ export default function Home() {
                       }
                     },
                   }));
+                  const absoluteIndex = messages.length - visibleMessages.length + index;
                   return (
-                    <TranscriptRow
-                      key={`${message.role}-${message.time}-${index}`}
-                      icon={message.role === "user" ? User : message.role === "agent" ? ShieldCheck : Sparkles}
-                      speaker={speaker}
-                      text={message.content}
-                      downloadUrl={message.downloadUrl}
-                      tone={tone}
-                      active={(message.role === "astra" && visibleVoiceState === "speaking") || (message.role === "user" && visibleVoiceState === "listening")}
-                      time={message.time}
-                      confirmation={message.confirmationId && confirmation?.id === message.confirmationId ? confirmation : null}
-                      confirmationBusy={Boolean(confirmation && message.confirmationId === confirmation.id && agentBusyId === confirmation.commandId)}
-                      onConfirmationParamChange={updateConfirmationParam}
-                      onConfirm={confirmAgentCommand}
-                      onCancelConfirm={cancelAgentConfirmation}
-                      actions={transcriptActions}
-                      motionIndex={Math.max(0, visibleMessages.length - 1 - index)}
-                      onViewFull={
-                        shouldOpenFull
-                          ? () =>
-                              setTranscriptDialog({
-                                speaker,
-                                text: message.content,
-                                time: message.time,
-                                tone,
-                                downloadUrl: message.downloadUrl,
-                              })
-                          : undefined
-                      }
-                    />
+                    <React.Fragment key={`${message.role}-${message.time}-${index}`}>
+                      {firstNewMessageIndex !== null && absoluteIndex === firstNewMessageIndex && (
+                        <div className="transcript-new-separator" />
+                      )}
+                      <TranscriptRow
+                        icon={message.role === "user" ? User : message.role === "agent" ? ShieldCheck : Sparkles}
+                        speaker={speaker}
+                        text={message.content}
+                        downloadUrl={message.downloadUrl}
+                        tone={tone}
+                        active={(message.role === "astra" && visibleVoiceState === "speaking") || (message.role === "user" && visibleVoiceState === "listening")}
+                        time={message.time}
+                        confirmation={message.confirmationId && confirmation?.id === message.confirmationId ? confirmation : null}
+                        confirmationBusy={Boolean(confirmation && message.confirmationId === confirmation.id && agentBusyId === confirmation.commandId)}
+                        onConfirmationParamChange={updateConfirmationParam}
+                        onConfirm={confirmAgentCommand}
+                        onCancelConfirm={cancelAgentConfirmation}
+                        actions={transcriptActions}
+                        motionIndex={Math.max(0, visibleMessages.length - 1 - index)}
+                        onViewFull={
+                          shouldOpenFull
+                            ? () =>
+                                setTranscriptDialog({
+                                  speaker,
+                                  text: message.content,
+                                  time: message.time,
+                                  tone,
+                                  downloadUrl: message.downloadUrl,
+                                })
+                            : undefined
+                        }
+                      />
+                    </React.Fragment>
                   );
                 })}
                 {liveTranscript && (
@@ -2515,7 +2581,14 @@ export default function Home() {
                     <strong>{currentTimelineItem?.label ?? "Astra"}</strong>
                     <span>Now</span>
                   </div>
-                  <p className="stream-cursor">{currentTimelineItem?.detail ?? "Working on the command..."}</p>
+                  <p className="stream-cursor">
+                    {currentTimelineItem?.detail ?? "Working on the command..."}
+                    <span className="transcript-thinking-dots" style={{ display: "inline-flex", marginLeft: "6px", verticalAlign: "middle" }} aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </p>
                 </div>
                 {!voiceOutputMuted && <MiniWave active tone="talking" />}
               </div>
@@ -2527,6 +2600,8 @@ export default function Home() {
                 const text = commandDraft.trim();
                 if (!text) return;
                 setCommandDraft("");
+                setFirstNewMessageIndex(null);
+                scrollTranscriptToBottom(true);
                 if (activePanel === "research") {
                   void submitResearchJob(text, "typed", "deep");
                 } else {
@@ -5991,9 +6066,17 @@ function TranscriptRow({
           <span>{time}</span>
         </div>
         <p className={onViewFull ? "compact" : undefined}>
-          {lines.map((line, index) => (
-            <span key={`${line}-${index}`}>{line}</span>
-          ))}
+          {text ? (
+            lines.map((line, index) => (
+              <span key={`${line}-${index}`}>{line}</span>
+            ))
+          ) : (
+            <span className="transcript-thinking-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          )}
           {downloadUrl && (
             <a className="transcript-download" href={downloadUrl} download>
               Download the file for the detailed report.
@@ -6073,6 +6156,18 @@ function InlineConfirmationCard({
   onConfirm: () => Promise<void>;
   onCancel: () => void;
 }) {
+  if (confirmation.commandId === "fill_web_form") {
+    return (
+      <FormFillConfirmationCard
+        confirmation={confirmation}
+        busy={busy}
+        onParamChange={onParamChange}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
+
   const entries = orderedConfirmationParams(confirmation.params);
 
   return (
@@ -6105,6 +6200,159 @@ function InlineConfirmationCard({
       </div>
     </div>
   );
+}
+
+function FormFillConfirmationCard({
+  confirmation,
+  busy,
+  onParamChange,
+  onConfirm,
+  onCancel,
+}: {
+  confirmation: ConfirmationState;
+  busy: boolean;
+  onParamChange: (key: string, value: unknown) => void;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const preview = getFormFillPreview(confirmation);
+  const fields = preview.fields ?? [];
+  const values = getFormFillValues(confirmation, preview);
+  const fillableFields = fields.filter((field) => !field.sensitive);
+  const blockedFields = preview.blocked_fields ?? fields.filter((field) => field.sensitive).map((field) => ({ key: field.key, label: field.label, reason: field.blocked_reason }));
+  const warnings = preview.warnings ?? [];
+  const waitingFor = preview.waiting_for ?? [];
+  const navigation = preview.navigation ?? [];
+
+  const updateFieldValue = (fieldKey: string, value: unknown) => {
+    onParamChange("field_values", { ...values, [fieldKey]: value });
+  };
+
+  return (
+    <div className="inline-confirm-card form-fill-card">
+      <div className="inline-confirm-head">
+        <div className="row-icon">
+          <SquarePen className="h-4 w-4" />
+        </div>
+        <div>
+          <strong>Form Fill Preview</strong>
+          <span>{preview.title || "Review values before Astra fills the page."}</span>
+        </div>
+      </div>
+
+      <div className="form-fill-meta">
+        {preview.flow_label && <span>{preview.flow_label}</span>}
+        <span>{preview.detected_count ?? fields.length} fields detected</span>
+        <span>{preview.mapped_count ?? Object.keys(values).length} mapped</span>
+        {preview.manual_required && <span>Human step needed</span>}
+      </div>
+      {preview.url && <div className="form-fill-url">{preview.url}</div>}
+
+      {navigation.length > 0 && (
+        <div className="form-fill-route">
+          {navigation.slice(-3).map((step, index) => (
+            <span key={`${step.action}-${step.url}-${index}`}>
+              {step.label || step.action || "opened"}{step.score ? ` (${step.score})` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="form-fill-warnings">
+          {warnings.map((warning) => (
+            <span key={warning}>{warning}</span>
+          ))}
+        </div>
+      )}
+
+      {waitingFor.length > 0 && (
+        <div className="form-fill-waiting">
+          <strong>Waiting for human</strong>
+          {waitingFor.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="form-fill-fields">
+        {fillableFields.length > 0 ? (
+          fillableFields.map((field) => (
+            <label key={field.key} className={field.required && !hasFormFillValue(values[field.key]) ? "missing" : ""}>
+              <span>
+                {field.label || field.key}
+                {field.required ? " *" : ""}
+              </span>
+              {renderFormFillInput(field, values[field.key], updateFieldValue)}
+            </label>
+          ))
+        ) : (
+          <div className="form-fill-empty">No safe fillable fields were detected.</div>
+        )}
+      </div>
+
+      {blockedFields.length > 0 && (
+        <div className="form-fill-blocked">
+          <strong>Skipped sensitive fields</strong>
+          {blockedFields.map((field) => (
+            <span key={`${field.key}-${field.label}`}>{field.label || field.key}: {field.reason || "manual only"}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="inline-confirm-actions">
+        <button type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="primary-action" onClick={() => void onConfirm()} disabled={busy || fillableFields.length === 0}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          Fill Safe Fields
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getFormFillPreview(confirmation: ConfirmationState): FormFillPreview {
+  const candidate = confirmation.data.form_fill_preview;
+  return candidate && typeof candidate === "object" ? (candidate as FormFillPreview) : {};
+}
+
+function getFormFillValues(confirmation: ConfirmationState, preview: FormFillPreview) {
+  const paramValues = confirmation.params.field_values;
+  if (paramValues && typeof paramValues === "object" && !Array.isArray(paramValues)) {
+    return paramValues as Record<string, unknown>;
+  }
+  return preview.field_values ?? {};
+}
+
+function renderFormFillInput(field: FormFillField, value: unknown, onChange: (key: string, value: unknown) => void) {
+  const controlType = (field.control_type || field.type || "text").toLowerCase();
+  const options = field.options ?? [];
+  if (controlType === "select" || controlType === "radio") {
+    return (
+      <select value={String(value ?? "")} onChange={(event) => onChange(field.key, event.target.value)}>
+        <option value="">Select...</option>
+        {options.map((option, index) => {
+          const optionValue = String(option.value || option.label || "");
+          return (
+            <option key={`${field.key}-${optionValue}-${index}`} value={optionValue}>
+              {option.label || optionValue}
+            </option>
+          );
+        })}
+      </select>
+    );
+  }
+  if (controlType === "checkbox") {
+    return <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(field.key, event.target.checked)} />;
+  }
+  return <input value={String(value ?? "")} onChange={(event) => onChange(field.key, event.target.value)} />;
+}
+
+function hasFormFillValue(value: unknown) {
+  if (typeof value === "boolean") return true;
+  return Boolean(String(value ?? "").trim());
 }
 
 function orderedConfirmationParams(params: Record<string, unknown>) {
