@@ -11,7 +11,7 @@ export type AutomationEngine = "astra" | "openrpa";
 export type AutomationWorkflowRefType = "id" | "filename";
 export type AgentMemoryCategory = "course" | "project" | "goal" | "preference" | "general";
 export type StudyArtifactType = "notes" | "flashcards" | "quiz" | "revision_plan" | "viva_questions";
-export type LlmProviderId = "cerebras" | "nvidia";
+export type LlmProviderId = "groq" | "gemini" | "nvidia" | "cerebras";
 export type LlmProfileName = "fast" | "pro";
 
 export type Source = {

@@ -338,14 +338,40 @@ const modeCopy: Record<AppMode, { title: string; label: string; placeholder: str
 };
 
 const providerLabels: Record<string, string> = {
-  cerebras: "Cerebras",
+  groq: "Groq",
+  gemini: "Google Gemini",
   nvidia: "NVIDIA NIM",
+  cerebras: "Cerebras",
   tavily: "Tavily",
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
   duckduckgo_fallback: "DuckDuckGo",
   piper_local: "Piper Voice",
 };
+
+const groqFastModels = [
+  "qwen/qwen3.8-27b",
+  "openai/gpt-oss-20b",
+];
+
+const groqProModels = [
+  "openai/gpt-oss-120b",
+];
+
+const geminiFastModels = [
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.1-flash-lite",
+];
+
+const geminiProModels = [
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-pro-latest",
+];
 
 const cerebrasFastModels = [
   "llama3.1-8b",
@@ -358,6 +384,7 @@ const cerebrasProModels = [
 ];
 
 const nvidiaFastModels = [
+  "meta/llama-3.2-11b-vision-instruct",
   "nvidia/llama-3.1-nemotron-nano-8b-v1",
   "mistralai/ministral-14b-instruct-2512",
   "microsoft/phi-4-multimodal-instruct",
@@ -366,6 +393,8 @@ const nvidiaFastModels = [
 ];
 
 const nvidiaProModels = [
+  "meta/llama-3.2-90b-vision-instruct",
+  "deepseek-ai/deepseek-v4-flash-0731",
   "mistralai/mistral-large-3-675b-instruct-2512",
   "meta/llama-4-maverick-17b-128e-instruct",
   "moonshotai/kimi-k2.6",
@@ -383,13 +412,21 @@ function modelOptionsForProfile(
 ) {
   if (!provider) return [];
   const preferences: Record<string, Record<LlmProfileName, string[]>> = {
-    cerebras: {
-      fast: cerebrasFastModels,
-      pro: cerebrasProModels,
+    groq: {
+      fast: groqFastModels,
+      pro: groqProModels,
+    },
+    gemini: {
+      fast: geminiFastModels,
+      pro: geminiProModels,
     },
     nvidia: {
       fast: nvidiaFastModels,
       pro: nvidiaProModels,
+    },
+    cerebras: {
+      fast: cerebrasFastModels,
+      pro: cerebrasProModels,
     },
   };
   const preferred = preferences[provider.id]?.[profileName];
@@ -698,7 +735,7 @@ export default function Home() {
         }))
       : [];
 
-    const preferred = ["cerebras", "nvidia", "tavily", "openalex", "semantic_scholar", "piper_local"];
+    const preferred = ["groq", "gemini", "nvidia", "cerebras", "tavily", "openalex", "semantic_scholar", "piper_local"];
     return preferred.map((name) => loadedRows.find((row) => row.name === name) ?? { name, label: providerLabels[name], enabled: false });
   }, [health]);
 
@@ -845,7 +882,7 @@ export default function Home() {
 
   const updateLlmProfile = useCallback(
     async (profileName: LlmProfileName, provider: string, model: string) => {
-      if (!llmSettings || provider !== "cerebras" && provider !== "nvidia") return;
+      if (!llmSettings || !["groq", "gemini", "nvidia", "cerebras"].includes(provider)) return;
       setSettingsBusy(true);
       setSettingsNotice(null);
       try {
